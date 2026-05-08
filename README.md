@@ -40,6 +40,24 @@ Common Lisp SDK です。
 (mcp-sdk:start-server *server*)
 ```
 
+## 使用例
+
+使用例は [`examples/`](examples/) にあります。ASDF system は
+[`mcp-sdk-examples.asd`](mcp-sdk-examples.asd) で定義しています。
+
+- `mcp-sdk-examples/echo-server`
+  最小構成の `echo` tool だけを持つサーバです。
+- `mcp-sdk-examples/notes-server`
+  `tools` / `resources` / `prompts` をまとめて試せるノート管理サーバです。
+
+読み込み例:
+
+```lisp
+(require :asdf)
+(asdf:load-asd #P"/path/to/cl-mcp-sdk/mcp-sdk-examples.asd")
+(asdf:load-system "mcp-sdk-examples")
+```
+
 ## 公開 API
 
 ### サーバ生成と起動
