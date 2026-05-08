@@ -72,6 +72,16 @@
 (defun latest-note-id (notes)
   (car (last (sorted-note-ids notes))))
 
+(defun complete-from-candidates (value candidates)
+  (let* ((prefix (or value ""))
+         (matches (loop for candidate in candidates
+                        when (uiop:string-prefix-p prefix candidate)
+                          collect candidate)))
+    (make-object
+     "values" (coerce matches 'vector)
+     "total" (length matches)
+     "hasMore" :false)))
+
 (defun note-id-from-uri (uri)
   (let ((prefix "note://"))
     (when (and (stringp uri)
@@ -236,6 +246,15 @@
        :uri-template "note://{id}"
        :description "ID を含む URI からノートを返します。"
        :mime-type "text/plain"
+       :completion-handler #'(lambda (context argument context-arguments)
+                               (declare (ignore context context-arguments))
+                               (let* ((snapshot (snapshot-notes))
+                                      (candidates
+                                        (loop for id in (sorted-note-ids snapshot)
+                                              collect (princ-to-string id))))
+                                 (complete-from-candidates
+                                  (mcp-sdk:json-get argument "value")
+                                  candidates)))
        :handler #'(lambda (context params)
                     (declare (ignore context))
                     (let* ((uri (mcp-sdk:json-get params "uri"))
@@ -261,6 +280,11 @@
               "name" "focus"
               "description" "要約で重点的に扱いたい観点"
               "required" :false))
+       :completion-handler #'(lambda (context argument context-arguments)
+                               (declare (ignore context context-arguments))
+                               (complete-from-candidates
+                                (mcp-sdk:json-get argument "value")
+                                '("重要な論点" "TODO" "アイデア" "決定事項")))
        :handler #'(lambda (context arguments)
                     (declare (ignore context))
                     (let* ((snapshot (snapshot-notes))

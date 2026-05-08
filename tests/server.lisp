@@ -254,3 +254,76 @@
     (handle-message server (make-notification "notifications/roots/list_changed"))
     (ok (wait-for #'(lambda ()
                       root-events)))))
+
+(deftest completion-support
+  (let ((server (make-test-server)))
+    (register-prompt server "greeter"
+                     :arguments (list (mcp-sdk::make-object
+                                       "name" "subject"
+                                       "required" t))
+                     :completion-handler
+                     #'(lambda (context argument context-arguments)
+                         (declare (ignore context))
+                         (ok (equal (json-get argument "name") "subject"))
+                         (ok (equal (json-get context-arguments "tone") "casual"))
+                         (mcp-sdk::make-object
+                          "values" (vector "world" "writer")
+                          "total" 2
+                          "hasMore" :false)))
+    (register-resource server "note-template"
+                       :uri-template "note://{id}"
+                       :completion-handler
+                       #'(lambda (context argument context-arguments)
+                            (declare (ignore context context-arguments))
+                            (ok (equal (json-get argument "value") "4"))
+                            '("42")))
+
+    (handle-message server
+                    (make-request 50 "initialize"
+                                  (mcp-sdk::make-object
+                                   "protocolVersion" *default-protocol-version*)))
+    (ok (wait-for #'(lambda ()
+                      (equal 50 (json-get (last-message server) "id")))))
+    (ok (json-get (json-get (response-result (last-message server)) "capabilities")
+                  "completions"))
+    (handle-message server (make-notification "notifications/initialized"))
+
+    (handle-message server
+                    (make-request 51 "completion/complete"
+                                  (mcp-sdk::make-object
+                                   "ref" (mcp-sdk::make-object
+                                          "type" "ref/prompt"
+                                          "name" "greeter")
+                                   "argument" (mcp-sdk::make-object
+                                               "name" "subject"
+                                               "value" "w")
+                                   "context" (mcp-sdk::make-object
+                                              "arguments" (mcp-sdk::make-object
+                                                           "tone" "casual")))))
+    (ok (wait-for #'(lambda ()
+                      (equal 51 (json-get (last-message server) "id")))))
+    (ok (equal (json-get (json-get (response-result (last-message server)) "completion")
+                         "total")
+               2))
+    (ok (equal (aref (json-get (json-get (response-result (last-message server))
+                                         "completion")
+                                "values")
+                     0)
+               "world"))
+
+    (handle-message server
+                    (make-request 52 "completion/complete"
+                                  (mcp-sdk::make-object
+                                   "ref" (mcp-sdk::make-object
+                                          "type" "ref/resource"
+                                          "uri" "note://{id}")
+                                   "argument" (mcp-sdk::make-object
+                                               "name" "id"
+                                               "value" "4"))))
+    (ok (wait-for #'(lambda ()
+                      (equal 52 (json-get (last-message server) "id")))))
+    (ok (equal (aref (json-get (json-get (response-result (last-message server))
+                                         "completion")
+                                "values")
+                     0)
+               "42"))))

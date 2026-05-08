@@ -33,3 +33,56 @@
     (ok (equal (json-get (aref (json-get (response-result (last-message server)) "content") 0)
                          "text")
                (format nil "file:///workspace/project (Project)~%")))))
+
+(deftest notes-server-completion
+  (let ((server (make-notes-server
+                 :transport (make-instance '<test-transport>))))
+    (handle-message server
+                    (make-request 50 "initialize"
+                                  (mcp-sdk::make-object
+                                   "protocolVersion" mcp-sdk::*default-protocol-version*)))
+    (ok (wait-for #'(lambda ()
+                      (equal 50 (json-get (last-message server) "id")))))
+    (ok (json-get (json-get (response-result (last-message server)) "capabilities")
+                  "completions"))
+    (handle-message server (make-notification "notifications/initialized"))
+
+    (handle-message server
+                    (make-request 51 "tools/call"
+                                  (mcp-sdk::make-object
+                                   "name" "notes/create"
+                                   "arguments" (mcp-sdk::make-object
+                                                "title" "TODO note"
+                                                "body" "buy milk"))))
+    (ok (wait-for #'(lambda ()
+                      (equal 51 (json-get (last-message server) "id")))))
+
+    (handle-message server
+                    (make-request 52 "completion/complete"
+                                  (mcp-sdk::make-object
+                                   "ref" (mcp-sdk::make-object
+                                          "type" "ref/prompt"
+                                          "name" "summarize-notes")
+                                   "argument" (mcp-sdk::make-object
+                                               "name" "focus"
+                                               "value" "TO"))))
+    (ok (wait-for #'(lambda ()
+                      (equal 52 (json-get (last-message server) "id")))))
+    (ok (equal (json-get (json-get (response-result (last-message server)) "completion")
+                         '("values" 0))
+               "TODO"))
+
+    (handle-message server
+                    (make-request 53 "completion/complete"
+                                  (mcp-sdk::make-object
+                                   "ref" (mcp-sdk::make-object
+                                          "type" "ref/resource"
+                                          "uri" "note://{id}")
+                                   "argument" (mcp-sdk::make-object
+                                               "name" "id"
+                                               "value" ""))))
+    (ok (wait-for #'(lambda ()
+                      (equal 53 (json-get (last-message server) "id")))))
+    (ok (equal (json-get (json-get (response-result (last-message server)) "completion")
+                         '("values" 0))
+               "1"))))

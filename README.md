@@ -12,6 +12,7 @@ Common Lisp SDK です。
 - `resources/list` / `resources/read`
 - `resources/templates/list`
 - `prompts/list` / `prompts/get`
+- `completion/complete`
 - `roots/list` の outbound request
 - outbound `send-request` / `send-notification`
 - progress notification と cancellation token
@@ -125,7 +126,7 @@ Common Lisp SDK です。
 
 ### リソース登録
 
-- `mcp-sdk:register-resource server name &key uri uri-template description mime-type handler`
+- `mcp-sdk:register-resource server name &key uri uri-template description mime-type handler completion-handler`
   resource を登録します。
 - `mcp-sdk:define-resource server name (context arguments) ...`
   `register-resource` の薄いマクロです。
@@ -139,10 +140,14 @@ Common Lisp SDK です。
   返り値は `resources/read` response の `result` 全体としてそのまま返されます。
   典型的には `("contents" [...])` を持つ object を返します。
   `uri-template` を指定した場合も、`resources/read` には実際に読みたい `uri` が渡されます。
+- `completion-handler`
+  `#'(lambda (context argument context-arguments) ...)` の形で定義します。
+  `completion/complete` で `ref/resource` として参照されたときに呼ばれます。
+  返り値は `values` / `total` / `hasMore` を持つ object、または候補文字列の list / vector を想定します。
 
 ### プロンプト登録
 
-- `mcp-sdk:register-prompt server name &key description arguments handler`
+- `mcp-sdk:register-prompt server name &key description arguments handler completion-handler`
   prompt を登録します。
 - `mcp-sdk:define-prompt server name (context arguments) ...`
   `register-prompt` の薄いマクロです。
@@ -157,6 +162,10 @@ Common Lisp SDK です。
   `arguments` は `prompts/get` の `params.arguments` を表す JSON object 相当の hash-table です。
   返り値は `prompts/get` response の `result` 全体としてそのまま返されます。
   典型的には `("messages" [...])` を持つ object を返します。
+- `completion-handler`
+  `#'(lambda (context argument context-arguments) ...)` の形で定義します。
+  `completion/complete` で `ref/prompt` として参照されたときに呼ばれます。
+  返り値は `values` / `total` / `hasMore` を持つ object、または候補文字列の list / vector を想定します。
 
 ### request context
 

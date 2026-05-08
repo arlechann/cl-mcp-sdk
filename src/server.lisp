@@ -136,7 +136,7 @@
          :annotations annotations
          :handler handler)))
 
-(defun register-resource (server name &key uri uri-template description mime-type handler)
+(defun register-resource (server name &key uri uri-template description mime-type handler completion-handler)
   (register-descriptor
    (server-resources server)
    name
@@ -145,16 +145,18 @@
          :uri-template uri-template
          :description description
          :mime-type mime-type
-         :handler handler)))
+         :handler handler
+         :completion-handler completion-handler)))
 
-(defun register-prompt (server name &key description arguments handler)
+(defun register-prompt (server name &key description arguments handler completion-handler)
   (register-descriptor
    (server-prompts server)
    name
    (list :name name
          :description description
          :arguments arguments
-         :handler handler)))
+         :handler handler
+         :completion-handler completion-handler)))
 
 (defmacro define-tool (server name (&optional context arguments) &body body)
   `(register-tool ,server ,name
@@ -193,11 +195,17 @@
     object))
 
 (defun capabilities-object (server)
-  (declare (ignore server))
-  (make-object
-   "prompts" (make-object)
-   "resources" (make-object)
-   "tools" (make-object)))
+  (let ((capabilities (make-object
+                       "prompts" (make-object)
+                       "resources" (make-object)
+                       "tools" (make-object))))
+    (when (or (loop for descriptor being the hash-values of (server-prompts server)
+                    thereis (getf descriptor :completion-handler))
+              (loop for descriptor being the hash-values of (server-resources server)
+                    thereis (getf descriptor :completion-handler)))
+      (setf (gethash "completions" capabilities)
+            (make-object)))
+    capabilities))
 
 (defun implementation-object (server)
   (make-object
@@ -340,6 +348,14 @@
       (raise-mcp-error +json-rpc-invalid-params-error+
                        (format nil "Unknown resource uri: ~A" uri))))
 
+(defun find-resource-by-template-uri (server uri)
+  (or (loop for descriptor being the hash-values of (server-resources server)
+            when (and (getf descriptor :uri-template)
+                      (string= (getf descriptor :uri-template) uri))
+              do (return descriptor))
+      (raise-mcp-error +json-rpc-invalid-params-error+
+                       (format nil "Unknown resource template uri: ~A" uri))))
+
 (defun handle-resources-read-request (server context params)
   (let* ((uri (json-get params "uri"))
          (descriptor (find-resource-by-uri server uri)))
@@ -360,10 +376,75 @@
          (arguments (ensure-object (json-get params "arguments"))))
     (funcall (getf descriptor :handler) context arguments)))
 
+(defun ensure-completion-values-vector (values)
+  (cond
+    ((vectorp values)
+     values)
+    ((listp values)
+     (make-array-from-list values))
+    (t
+     (raise-mcp-error +json-rpc-invalid-params-error+
+                      "Completion values must be a list or vector"))))
+
+(defun normalize-completion-result (result)
+  (cond
+    ((and (object-p result)
+          (json-get result "completion"))
+     result)
+    ((object-p result)
+     (let* ((values (ensure-completion-values-vector
+                     (or (json-get result "values")
+                         '())))
+            (completion (make-object
+                         "values" values
+                         "total" (or (json-get result "total")
+                                     (length values))
+                         "hasMore" (or (json-get result "hasMore")
+                                       :false))))
+       (make-object "completion" completion)))
+    ((or (listp result)
+         (vectorp result))
+     (let ((values (ensure-completion-values-vector result)))
+       (make-object
+        "completion" (make-object
+                      "values" values
+                      "total" (length values)
+                      "hasMore" :false))))
+    (t
+     (raise-mcp-error +json-rpc-invalid-params-error+
+                      "Completion handler must return an object, list, or vector"))))
+
+(defun find-completion-descriptor (server ref)
+  (let ((ref-type (json-get ref "type")))
+    (cond
+      ((string= ref-type "ref/prompt")
+       (find-descriptor (server-prompts server)
+                        (json-get ref "name")
+                        "prompt"))
+      ((string= ref-type "ref/resource")
+       (find-resource-by-template-uri server (json-get ref "uri")))
+      (t
+       (raise-mcp-error +json-rpc-invalid-params-error+
+                        (format nil "Unknown completion ref type: ~A" ref-type))))))
+
+(defun handle-completion-complete-request (server context params)
+  (let* ((ref (ensure-object (json-get params "ref")))
+         (argument (ensure-object (json-get params "argument")))
+         (completion-context (ensure-object (json-get params "context")))
+         (context-arguments (ensure-object (json-get completion-context "arguments")))
+         (descriptor (find-completion-descriptor server ref))
+         (handler (getf descriptor :completion-handler)))
+    (unless handler
+      (raise-mcp-error +json-rpc-invalid-params-error+
+                       "Completion is not supported for the requested reference"))
+    (normalize-completion-result
+     (funcall handler context argument context-arguments))))
+
 (defvar *feature-request-handlers*
   '(("ping" . handle-ping-request)
     ("tools/list" . handle-tools-list-request)
     ("tools/call" . handle-tools-call-request)
+    ("completion/complete" . handle-completion-complete-request)
     ("resources/list" . handle-resources-list-request)
     ("resources/templates/list" . handle-resource-templates-list-request)
     ("resources/read" . handle-resources-read-request)
