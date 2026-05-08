@@ -60,6 +60,15 @@
             (write-line line stream)))
         "ノートはまだありません。")))
 
+(defun roots-text (roots)
+  (if (plusp (length roots))
+      (with-output-to-string (stream)
+        (loop for root in (coerce roots 'list)
+              do (format stream "~A~@[ (~A)~]~%"
+                         (mcp-sdk:json-get root "uri")
+                         (mcp-sdk:json-get root "name"))))
+      "roots はまだありません。"))
+
 (defun latest-note-id (notes)
   (car (last (sorted-note-ids notes))))
 
@@ -70,10 +79,11 @@
                (string= prefix uri :end2 (length prefix)))
       (parse-integer (subseq uri (length prefix)) :junk-allowed t))))
 
-(defun make-notes-server ()
+(defun make-notes-server (&key transport)
   (let ((server (mcp-sdk:make-server
                  :name "notes-server"
-                 :version "0.1.0"))
+                 :version "0.1.0"
+                 :transport transport))
         (notes (make-hash-table))
         (lock (make-lock "notes-server.notes"))
         (next-id 0))
@@ -154,6 +164,23 @@
                           (note-content (format nil "note ~A was not found" id))))))
       (mcp-sdk:register-tool
        server
+       "notes/list-roots"
+       :title "List Roots"
+       :description "クライアントが提供する roots を一覧表示します。"
+       :input-schema
+       (schema
+        "{\"type\":\"object\",\"properties\":{}}")
+       :handler #'(lambda (context arguments)
+                    (declare (ignore arguments))
+                    (let ((roots (coerce (mcp-sdk:context-list-roots context) 'vector)))
+                      (make-object
+                       "roots" roots
+                       "content"
+                       (vector (make-object
+                                "type" "text"
+                                "text" (roots-text roots)))))))
+      (mcp-sdk:register-tool
+       server
        "notes/delete"
        :title "Delete Note"
        :description "ID を指定してノートを削除します。"
@@ -224,7 +251,7 @@
                                     (format nil "~A~%~%~A"
                                             (mcp-sdk:json-get note "title")
                                             (mcp-sdk:json-get note "body"))
-                                    (format nil "note ~A was not found" id)))))))
+                                    (format nil "note ~A was not found" id))))))))
       (mcp-sdk:register-prompt
        server
        "summarize-notes"

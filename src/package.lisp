@@ -23,6 +23,7 @@
   (:export
    #:*default-protocol-version*
    #:context-cancelled-p
+   #:context-list-roots
    #:context-report-progress
    #:deep-copy-object
    #:define-prompt

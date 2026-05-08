@@ -58,6 +58,8 @@
                     :reader server-active-requests)
    (pending-outbound :initform (make-hash-table :test #'equal)
                      :reader server-pending-outbound)
+   (client-capabilities :initform (make-object)
+                        :accessor server-client-capabilities)
    (next-request-id :initform 0
                     :accessor server-next-request-id)))
 
@@ -107,6 +109,16 @@
         (send-notification (context-server context)
                            "notifications/progress"
                            payload)))))
+
+(defun context-list-roots (context &key timeout)
+  (let* ((server (context-server context))
+         (roots-capabilities (json-get (server-client-capabilities server) "roots")))
+    (unless roots-capabilities
+      (raise-mcp-error +json-rpc-invalid-request-error+
+                       "Client does not advertise roots capability"))
+    (let ((result (send-request server "roots/list" :timeout timeout)))
+      (or (json-get result "roots")
+          #()))))
 
 (defun register-descriptor (table name descriptor)
   (setf (gethash name table) descriptor)
@@ -365,8 +377,10 @@
                      (format nil "Unknown method: ~A" method))))
 
 (defun handle-initialize-request (server context params)
-  (declare (ignore context params))
+  (declare (ignore context))
   (setf (server-initialized-p server) nil)
+  (setf (server-client-capabilities server)
+        (ensure-object (json-get params "capabilities")))
   (make-object
    "protocolVersion" *default-protocol-version*
    "capabilities" (capabilities-object server)
@@ -450,6 +464,8 @@
            (with-lock-held ((cancellation-token-lock token))
              (setf (cancelled-p token) t))
            (emit server :request-cancelled request-id))))
+      ((string= method "notifications/roots/list_changed")
+       (emit server :roots-list-changed))
       (t nil))))
 
 (defun handle-message (server message)

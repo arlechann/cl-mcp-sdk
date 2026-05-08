@@ -205,3 +205,52 @@
     (ok (equal (json-get (aref (json-get (response-result (last-message server)) "contents") 0)
                          "text")
                "templated note"))))
+
+(deftest roots-support
+  (let ((server (make-test-server))
+        (root-events '()))
+    (register-tool server "show-roots"
+                   :input-schema (mcp-sdk::make-object "type" "object")
+                   :handler #'(lambda (context arguments)
+                                (declare (ignore arguments))
+                                (let ((roots (context-list-roots context)))
+                                  (mcp-sdk::make-object
+                                   "count" (length roots)))))
+    (server-on server :roots-list-changed
+               #'(lambda ()
+                   (push :changed root-events)))
+
+    (handle-message server
+                    (make-request 33 "initialize"
+                                  (mcp-sdk::make-object
+                                   "protocolVersion" *default-protocol-version*
+                                   "capabilities" (mcp-sdk::make-object
+                                                   "roots" (mcp-sdk::make-object
+                                                            "listChanged" t)))))
+    (ok (wait-for #'(lambda ()
+                      (equal 33 (json-get (last-message server) "id")))))
+    (handle-message server (make-notification "notifications/initialized"))
+
+    (handle-message server
+                    (make-request 34 "tools/call"
+                                  (mcp-sdk::make-object
+                                   "name" "show-roots"
+                                   "arguments" (mcp-sdk::make-object))))
+    (ok (wait-for #'(lambda ()
+                      (find-message-by-method server "roots/list"))))
+    (handle-message server
+                    (mcp-sdk::make-object
+                     "jsonrpc" "2.0"
+                     "id" 1
+                     "result" (mcp-sdk::make-object
+                               "roots"
+                               (vector (mcp-sdk::make-object
+                                        "uri" "file:///workspace/project"
+                                        "name" "Project")))))
+    (ok (wait-for #'(lambda ()
+                      (equal 34 (json-get (last-message server) "id")))))
+    (ok (= (json-get (response-result (last-message server)) "count") 1))
+
+    (handle-message server (make-notification "notifications/roots/list_changed"))
+    (ok (wait-for #'(lambda ()
+                      root-events)))))

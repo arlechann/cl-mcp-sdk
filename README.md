@@ -12,6 +12,7 @@ Common Lisp SDK です。
 - `resources/list` / `resources/read`
 - `resources/templates/list`
 - `prompts/list` / `prompts/get`
+- `roots/list` の outbound request
 - outbound `send-request` / `send-notification`
 - progress notification と cancellation token
 
@@ -159,6 +160,11 @@ Common Lisp SDK です。
 
 ### request context
 
+- `mcp-sdk:context-list-roots context &key timeout`
+  クライアントへ `roots/list` request を送り、`roots` 配列を返します。
+  client が `initialize` で `roots` capability を広告していない場合は
+  `mcp-sdk:mcp-error` を送出します。
+  `timeout` を指定した場合は `send-request` と同じ意味で待機時間を制限します。
 - `mcp-sdk:context-report-progress context progress &optional total message`
   `notifications/progress` を送信します。
   `progress` は現在値、`total` は総量、`message` は進捗メッセージです。
