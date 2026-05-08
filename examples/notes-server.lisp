@@ -63,6 +63,13 @@
 (defun latest-note-id (notes)
   (car (last (sorted-note-ids notes))))
 
+(defun note-id-from-uri (uri)
+  (let ((prefix "note://"))
+    (when (and (stringp uri)
+               (<= (length prefix) (length uri))
+               (string= prefix uri :end2 (length prefix)))
+      (parse-integer (subseq uri (length prefix)) :junk-allowed t))))
+
 (defun make-notes-server ()
   (let ((server (mcp-sdk:make-server
                  :name "notes-server"
@@ -196,6 +203,28 @@
                                             (mcp-sdk:json-get note "title")
                                             (mcp-sdk:json-get note "body"))
                                     "ノートはまだありません。")))))))
+      (mcp-sdk:register-resource
+       server
+       "note-by-id"
+       :uri-template "note://{id}"
+       :description "ID を含む URI からノートを返します。"
+       :mime-type "text/plain"
+       :handler #'(lambda (context params)
+                    (declare (ignore context))
+                    (let* ((uri (mcp-sdk:json-get params "uri"))
+                           (id (note-id-from-uri uri))
+                           (note (and id (find-note id))))
+                      (make-object
+                       "contents"
+                       (vector (make-object
+                                "uri" uri
+                                "mimeType" "text/plain"
+                                "text"
+                                (if note
+                                    (format nil "~A~%~%~A"
+                                            (mcp-sdk:json-get note "title")
+                                            (mcp-sdk:json-get note "body"))
+                                    (format nil "note ~A was not found" id)))))))
       (mcp-sdk:register-prompt
        server
        "summarize-notes"

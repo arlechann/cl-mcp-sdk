@@ -10,6 +10,7 @@ Common Lisp SDK です。
 - `initialize` / `notifications/initialized` / `ping`
 - `tools/list` / `tools/call`
 - `resources/list` / `resources/read`
+- `resources/templates/list`
 - `prompts/list` / `prompts/get`
 - outbound `send-request` / `send-notification`
 - progress notification と cancellation token
@@ -129,12 +130,14 @@ Common Lisp SDK です。
   `register-resource` の薄いマクロです。
 
 - `uri`, `uri-template`, `description`, `mime-type`
-  `resources/list` response にそのまま載るメタデータです。
+  resource のメタデータです。`uri` を指定した resource は `resources/list` に、
+  `uri-template` を指定した resource は `resources/templates/list` にそのまま載ります。
 - `handler`
   `#'(lambda (context params) ...)` の形で定義します。
   第 2 引数は `resources/read` の `params` 全体です。通常は `uri` を含みます。
   返り値は `resources/read` response の `result` 全体としてそのまま返されます。
   典型的には `("contents" [...])` を持つ object を返します。
+  `uri-template` を指定した場合も、`resources/read` には実際に読みたい `uri` が渡されます。
 
 ### プロンプト登録
 

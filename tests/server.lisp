@@ -165,3 +165,43 @@
                        "result" (mcp-sdk::make-object "roots" #())))
       (join-thread thread)
       (ok t))))
+
+(deftest resource-templates
+  (let ((server (make-test-server)))
+    (register-resource server "note-template"
+                       :uri-template "note://{id}"
+                       :description "Templated note resource"
+                       :mime-type "text/plain"
+                       :handler #'(lambda (context arguments)
+                                    (declare (ignore context))
+                                    (mcp-sdk::make-object
+                                     "contents"
+                                     (vector (mcp-sdk::make-object
+                                              "uri" (json-get arguments "uri")
+                                              "mimeType" "text/plain"
+                                              "text" "templated note")))))
+
+    (handle-message server
+                    (make-request 30 "initialize"
+                                  (mcp-sdk::make-object
+                                   "protocolVersion" *default-protocol-version*)))
+    (ok (wait-for #'(lambda ()
+                      (equal 30 (json-get (last-message server) "id")))))
+    (handle-message server (make-notification "notifications/initialized"))
+
+    (handle-message server (make-request 31 "resources/templates/list"))
+    (ok (wait-for #'(lambda ()
+                      (equal 31 (json-get (last-message server) "id")))))
+    (ok (= (length (json-get (response-result (last-message server)) "resourceTemplates")) 1))
+    (ok (equal (json-get (aref (json-get (response-result (last-message server)) "resourceTemplates") 0)
+                         "uriTemplate")
+               "note://{id}"))
+
+    (handle-message server
+                    (make-request 32 "resources/read"
+                                  (mcp-sdk::make-object "uri" "note://42")))
+    (ok (wait-for #'(lambda ()
+                      (equal 32 (json-get (last-message server) "id")))))
+    (ok (equal (json-get (aref (json-get (response-result (last-message server)) "contents") 0)
+                         "text")
+               "templated note"))))
