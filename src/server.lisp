@@ -104,6 +104,8 @@
                :accessor server-task-order)
    (client-capabilities :initform (make-object)
                         :accessor server-client-capabilities)
+   (roots :initform (make-array 0)
+          :accessor server-roots)
    (task-default-ttl-ms :initarg :task-default-ttl-ms
                         :initform 60000
                         :reader server-task-default-ttl-ms)
@@ -229,15 +231,9 @@
                            "notifications/progress"
                            payload)))))
 
-(defun context-list-roots (context &key timeout)
-  (let* ((server (context-server context))
-         (roots-capabilities (json-get (server-client-capabilities server) "roots")))
-    (unless roots-capabilities
-      (raise-mcp-error +json-rpc-invalid-request-error+
-                       "Client does not advertise roots capability"))
-    (let ((result (send-request server "roots/list" :timeout timeout)))
-      (or (json-get result "roots")
-          #()))))
+(defun current-roots (server)
+  (with-lock-held ((server-state-lock server))
+    (deep-copy-object (server-roots server))))
 
 (defun normalize-task-support (task-support)
   (etypecase task-support
@@ -368,6 +364,28 @@
   (make-object
    "name" (server-name server)
    "version" (server-version server)))
+
+(defun roots-capability-p (server)
+  (json-get (server-client-capabilities server) "roots"))
+
+(defun refresh-roots (server &key timeout)
+  (unless (roots-capability-p server)
+    (raise-mcp-error +json-rpc-invalid-request-error+
+                     "Client does not advertise roots capability"))
+  (let ((roots (or (json-get (send-request server "roots/list" :timeout timeout) "roots")
+                   (make-array 0))))
+    (with-lock-held ((server-state-lock server))
+      (setf (server-roots server) roots))
+    roots))
+
+(defun refresh-roots-async (server &key timeout)
+  (make-thread
+   #'(lambda ()
+       (handler-case
+           (refresh-roots server :timeout timeout)
+         (error ()
+           nil)))
+   :name "mcp-sdk.refresh-roots"))
 
 (defun send-response (server id result)
   (transport-send-message (server-transport server)
@@ -960,6 +978,8 @@
   (setf (server-initialized-p server) nil)
   (setf (server-client-capabilities server)
         (ensure-object (json-get params "capabilities")))
+  (with-lock-held ((server-state-lock server))
+    (setf (server-roots server) (make-array 0)))
   (make-object
    "protocolVersion" *default-protocol-version*
    "capabilities" (capabilities-object server)
@@ -1058,7 +1078,9 @@
     (emit server :notification-received message)
     (cond
       ((string= method "notifications/initialized")
-       (setf (server-initialized-p server) t))
+       (setf (server-initialized-p server) t)
+       (when (roots-capability-p server)
+         (refresh-roots-async server)))
       ((string= method "notifications/cancelled")
        (let* ((request-id (json-get params "requestId"))
               (token (gethash request-id (server-active-requests server))))
@@ -1067,6 +1089,7 @@
              (setf (cancelled-p token) t))
            (emit server :request-cancelled request-id))))
       ((string= method "notifications/roots/list_changed")
+       (refresh-roots-async server)
        (emit server :roots-list-changed))
       (t nil))))
 

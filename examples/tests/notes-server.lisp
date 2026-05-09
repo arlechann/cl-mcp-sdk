@@ -13,17 +13,17 @@
     (ok (wait-for #'(lambda ()
                       (equal 40 (json-get (last-message server) "id")))))
     (handle-message server (make-notification "notifications/initialized"))
+    (ok (wait-for #'(lambda ()
+                      (find-message-by-method server "roots/list"))))
+    (handle-message server
+                    (json-decode
+                     "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"roots\":[{\"uri\":\"file:///workspace/project\",\"name\":\"Project\"}]}}"))
 
     (handle-message server
                     (make-request 41 "tools/call"
                                   (mcp-sdk::make-object
                                    "name" "notes/list-roots"
                                    "arguments" (mcp-sdk::make-object))))
-    (ok (wait-for #'(lambda ()
-                      (find-message-by-method server "roots/list"))))
-    (handle-message server
-                    (json-decode
-                     "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"roots\":[{\"uri\":\"file:///workspace/project\",\"name\":\"Project\"}]}}"))
     (ok (wait-for #'(lambda ()
                       (equal 41 (json-get (last-message server) "id")))))
     (ok (= (length (json-get (response-result (last-message server)) "roots")) 1))

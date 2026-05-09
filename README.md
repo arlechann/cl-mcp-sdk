@@ -14,7 +14,7 @@ Common Lisp SDK です。
 - `prompts/list` / `prompts/get`
 - `completion/complete`
 - `tasks/get` / `tasks/result` / `tasks/list` / `tasks/cancel`
-- `roots/list` の outbound request
+- roots capability を使った roots cache の同期
 - outbound `send-request` / `send-notification`
 - progress notification と cancellation token
 
@@ -180,11 +180,6 @@ Common Lisp SDK です。
 
 ### request context
 
-- `mcp-sdk:context-list-roots context &key timeout`
-  クライアントへ `roots/list` request を送り、`roots` 配列を返します。
-  client が `initialize` で `roots` capability を広告していない場合は
-  `mcp-sdk:mcp-error` を送出します。
-  `timeout` を指定した場合は `send-request` と同じ意味で待機時間を制限します。
 - `mcp-sdk:context-report-progress context progress &optional total message`
   `notifications/progress` を送信します。
   `progress` は現在値、`total` は総量、`message` は進捗メッセージです。
@@ -192,6 +187,14 @@ Common Lisp SDK です。
 - `mcp-sdk:context-cancelled-p context`
   cancellation token が立っているかを返します。
   強制停止は行わないため、長時間処理では handler 側が協調的に確認する想定です。
+
+### roots
+
+- `mcp-sdk:current-roots server`
+  サーバ内部にキャッシュされた現在の roots を返します。返り値は深いコピーです。
+  roots cache は client が `roots` capability を広告している場合に、
+  `notifications/initialized` と `notifications/roots/list_changed` を契機として
+  `roots/list` を再取得して更新されます。
 
 ### tasks
 

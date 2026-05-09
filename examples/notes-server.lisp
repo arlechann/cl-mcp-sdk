@@ -186,8 +186,8 @@
        (schema
         "{\"type\":\"object\",\"properties\":{}}")
        :handler #'(lambda (context arguments)
-                    (declare (ignore arguments))
-                    (let ((roots (coerce (mcp-sdk:context-list-roots context) 'vector)))
+                    (declare (ignore context arguments))
+                    (let ((roots (coerce (mcp-sdk:current-roots server) 'vector)))
                       (make-object
                        "roots" roots
                        "content"

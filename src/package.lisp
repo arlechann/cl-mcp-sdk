@@ -24,8 +24,8 @@
   (:export
    #:*default-protocol-version*
    #:context-cancelled-p
-   #:context-list-roots
    #:context-report-progress
+   #:current-roots
    #:deep-copy-object
    #:define-prompt
    #:define-resource

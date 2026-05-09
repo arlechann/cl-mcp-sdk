@@ -162,9 +162,15 @@
                       (mcp-sdk::make-object
                        "jsonrpc" "2.0"
                        "id" 1
-                       "result" (mcp-sdk::make-object "roots" #())))
+                       "result" (mcp-sdk::make-object "roots" (make-array 0))))
       (join-thread thread)
       (ok t))))
+
+(deftest roots-storage-is-not-shared
+  (let ((server-1 (make-test-server))
+        (server-2 (make-test-server)))
+    (ok (not (eq (mcp-sdk::server-roots server-1)
+                 (mcp-sdk::server-roots server-2))))))
 
 (deftest resource-templates
   (let ((server (make-test-server)))
@@ -212,8 +218,8 @@
     (register-tool server "show-roots"
                    :input-schema (mcp-sdk::make-object "type" "object")
                    :handler #'(lambda (context arguments)
-                                (declare (ignore arguments))
-                                (let ((roots (context-list-roots context)))
+                                (declare (ignore context arguments))
+                                (let ((roots (mcp-sdk:current-roots server)))
                                   (mcp-sdk::make-object
                                    "count" (length roots)))))
     (server-on server :roots-list-changed
@@ -230,12 +236,6 @@
     (ok (wait-for #'(lambda ()
                       (equal 33 (json-get (last-message server) "id")))))
     (handle-message server (make-notification "notifications/initialized"))
-
-    (handle-message server
-                    (make-request 34 "tools/call"
-                                  (mcp-sdk::make-object
-                                   "name" "show-roots"
-                                   "arguments" (mcp-sdk::make-object))))
     (ok (wait-for #'(lambda ()
                       (find-message-by-method server "roots/list"))))
     (handle-message server
@@ -248,12 +248,40 @@
                                         "uri" "file:///workspace/project"
                                         "name" "Project")))))
     (ok (wait-for #'(lambda ()
+                      (= (length (mcp-sdk:current-roots server)) 1))))
+
+    (handle-message server
+                    (make-request 34 "tools/call"
+                                  (mcp-sdk::make-object
+                                   "name" "show-roots"
+                                   "arguments" (mcp-sdk::make-object))))
+    (ok (wait-for #'(lambda ()
                       (equal 34 (json-get (last-message server) "id")))))
     (ok (= (json-get (response-result (last-message server)) "count") 1))
 
     (handle-message server (make-notification "notifications/roots/list_changed"))
     (ok (wait-for #'(lambda ()
-                      root-events)))))
+                      root-events)))
+    (ok (wait-for #'(lambda ()
+                      (let ((message (car (last (remove-if-not
+                                                 #'(lambda (entry)
+                                                     (equal "roots/list"
+                                                            (json-get entry "method")))
+                                                 (all-messages server))))))
+                        (equal 2 (json-get message "id"))))))
+    (handle-message server
+                    (mcp-sdk::make-object
+                     "jsonrpc" "2.0"
+                     "id" 2
+                     "result" (mcp-sdk::make-object
+                               "roots"
+                               (vector (mcp-sdk::make-object
+                                        "uri" "file:///workspace/updated"
+                                        "name" "Updated")))))
+    (ok (wait-for #'(lambda ()
+                      (equal "file:///workspace/updated"
+                             (mcp-sdk:json-get (mcp-sdk:current-roots server)
+                                               '(0 "uri"))))))))
 
 (deftest completion-support
   (let ((server (make-test-server)))
