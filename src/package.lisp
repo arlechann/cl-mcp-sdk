@@ -39,6 +39,7 @@
    #:json-decode
    #:json-encode
    #:json-get
+   #:log-message
    #:make-server
    #:make-stdio-transport
    #:mcp-error

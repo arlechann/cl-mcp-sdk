@@ -87,6 +87,43 @@
                          '("values" 0))
                "1"))))
 
+(deftest notes-server-logging
+  (let ((server (make-notes-server
+                 :transport (make-instance '<test-transport>))))
+    (handle-message server
+                    (make-request 54 "initialize"
+                                  (mcp-sdk::make-object
+                                   "protocolVersion" mcp-sdk::*default-protocol-version*)))
+    (ok (wait-for #'(lambda ()
+                      (equal 54 (json-get (last-message server) "id")))))
+    (ok (json-get (json-get (response-result (last-message server)) "capabilities")
+                  "logging"))
+    (handle-message server (make-notification "notifications/initialized"))
+
+    (handle-message server
+                    (make-request 55 "logging/setLevel"
+                                  (mcp-sdk::make-object
+                                   "level" "info")))
+    (ok (wait-for #'(lambda ()
+                      (equal 55 (json-get (last-message server) "id")))))
+
+    (handle-message server
+                    (make-request 56 "tools/call"
+                                  (mcp-sdk::make-object
+                                   "name" "notes/create"
+                                   "arguments" (mcp-sdk::make-object
+                                                "title" "logged note"
+                                                "body" "body"))))
+    (ok (wait-for #'(lambda ()
+                      (equal 56 (json-get (last-message server) "id")))))
+    (ok (wait-for #'(lambda ()
+                      (let ((message (find-message-by-method server "notifications/message")))
+                        (and message
+                             (equal "info" (json-get message '("params" "level")))
+                             (equal "notes-server" (json-get message '("params" "logger")))
+                             (equal "notes/create" (json-get message '("params" "data" "operation")))
+                             (equal "logged note" (json-get message '("params" "data" "title"))))))))))
+
 (deftest notes-server-task-tool
   (let ((server (make-notes-server
                  :transport (make-instance '<test-transport>)

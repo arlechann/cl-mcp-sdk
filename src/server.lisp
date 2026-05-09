@@ -104,6 +104,8 @@
                :accessor server-task-order)
    (client-capabilities :initform (make-object)
                         :accessor server-client-capabilities)
+   (logging-level :initform nil
+                  :accessor server-logging-level)
    (roots :initform (make-array 0)
           :accessor server-roots)
    (task-default-ttl-ms :initarg :task-default-ttl-ms
@@ -261,6 +263,72 @@
     (:optional "optional")
     (:required "required")))
 
+(defun normalize-logging-level (level)
+  (etypecase level
+    (keyword
+     (ecase level
+       (:debug :debug)
+       (:info :info)
+       (:notice :notice)
+       (:warning :warning)
+       (:error :error)
+       (:critical :critical)
+       (:alert :alert)
+       (:emergency :emergency)))
+    (string
+     (cond
+       ((string= level "debug") :debug)
+       ((string= level "info") :info)
+       ((string= level "notice") :notice)
+       ((string= level "warning") :warning)
+       ((string= level "error") :error)
+       ((string= level "critical") :critical)
+       ((string= level "alert") :alert)
+       ((string= level "emergency") :emergency)
+       (t
+        (raise-mcp-error +json-rpc-invalid-params-error+
+                         (format nil "Invalid logging level: ~A" level)))))))
+
+(defun logging-level-name (level)
+  (ecase level
+    (:debug "debug")
+    (:info "info")
+    (:notice "notice")
+    (:warning "warning")
+    (:error "error")
+    (:critical "critical")
+    (:alert "alert")
+    (:emergency "emergency")))
+
+(defun logging-level-priority (level)
+  (ecase level
+    (:debug 7)
+    (:info 6)
+    (:notice 5)
+    (:warning 4)
+    (:error 3)
+    (:critical 2)
+    (:alert 1)
+    (:emergency 0)))
+
+(defun logging-enabled-p (server level)
+  (let ((minimum-level (server-logging-level server)))
+    (and minimum-level
+         (<= (logging-level-priority (normalize-logging-level level))
+             (logging-level-priority minimum-level)))))
+
+(defun log-message (server level data &key logger)
+  (let ((normalized-level (normalize-logging-level level)))
+    (when (logging-enabled-p server normalized-level)
+      (let ((params (make-object
+                     "level" (logging-level-name normalized-level)
+                     "data" data)))
+        (when logger
+          (setf (gethash "logger" params) logger))
+        (send-notification server "notifications/message" params)
+        (emit server :log-message server params))))
+  nil)
+
 (defun register-descriptor (table name descriptor)
   (setf (gethash name table) descriptor)
   descriptor)
@@ -352,6 +420,8 @@
            "requests" (make-object
                        "tools" (make-object
                                 "call" (make-object)))))
+    (setf (gethash "logging" capabilities)
+          (make-object))
     (when (or (loop for descriptor being the hash-values of (server-prompts server)
                     thereis (getf descriptor :completion-handler))
               (loop for descriptor being the hash-values of (server-resources server)
@@ -670,6 +740,12 @@
   (declare (ignore server context params))
   (make-object))
 
+(defun handle-logging-set-level-request (server context params)
+  (declare (ignore context))
+  (setf (server-logging-level server)
+        (normalize-logging-level (json-get params "level")))
+  (make-object))
+
 (defun handle-tools-list-request (server context params)
   (declare (ignore context params))
   (let ((tools '()))
@@ -954,6 +1030,7 @@
 
 (defvar *feature-request-handlers*
   '(("ping" . handle-ping-request)
+    ("logging/setLevel" . handle-logging-set-level-request)
     ("tools/list" . handle-tools-list-request)
     ("tools/call" . handle-tools-call-request)
     ("tasks/get" . handle-tasks-get-request)

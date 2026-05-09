@@ -150,6 +150,51 @@
                              (response-result message))))))
     (ok (json-get (response-result (last-message server)) "cancelled"))))
 
+(deftest logging-support
+  (let ((server (make-test-server)))
+    (handle-message server
+                    (make-request 22 "initialize"
+                                  (mcp-sdk::make-object
+                                   "protocolVersion" *default-protocol-version*)))
+    (ok (wait-for #'(lambda ()
+                      (equal 22 (json-get (last-message server) "id")))))
+    (ok (json-get (json-get (response-result (last-message server)) "capabilities")
+                  "logging"))
+    (handle-message server (make-notification "notifications/initialized"))
+
+    (mcp-sdk:log-message server "info" "before setLevel" :logger "test")
+    (ok (null (find-message-by-method server "notifications/message")))
+
+    (handle-message server
+                    (make-request 23 "logging/setLevel"
+                                  (mcp-sdk::make-object
+                                   "level" "warning")))
+    (ok (wait-for #'(lambda ()
+                      (equal 23 (json-get (last-message server) "id")))))
+    (ok (zerop (hash-table-count (response-result (last-message server)))))
+
+    (mcp-sdk:log-message server :info "ignored" :logger "test")
+    (ok (null (find-message-by-method server "notifications/message")))
+
+    (mcp-sdk:log-message server "error"
+                         (mcp-sdk::make-object "message" "emitted")
+                         :logger "test")
+    (ok (wait-for #'(lambda ()
+                      (let ((message (find-message-by-method server "notifications/message")))
+                        (and message
+                             (equal "error" (json-get message '("params" "level")))
+                             (equal "test" (json-get message '("params" "logger")))
+                             (equal "emitted" (json-get message '("params" "data" "message"))))))))
+
+    (handle-message server
+                    (make-request 24 "logging/setLevel"
+                                  (mcp-sdk::make-object
+                                   "level" "bogus")))
+    (ok (wait-for #'(lambda ()
+                      (equal 24 (json-get (last-message server) "id")))))
+    (ok (= (json-get (json-get (last-message server) "error") "code")
+           +json-rpc-invalid-params-error+))))
+
 (deftest outbound-request-roundtrip
   (let ((server (make-test-server)))
     (let ((thread (make-thread

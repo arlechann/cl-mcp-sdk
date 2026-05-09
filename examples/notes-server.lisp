@@ -89,6 +89,12 @@
                (string= prefix uri :end2 (length prefix)))
       (parse-integer (subseq uri (length prefix)) :junk-allowed t))))
 
+(defun log-notes-message (server operation &rest entries)
+  (let ((data (apply #'make-object
+                     "operation" operation
+                     entries)))
+    (mcp-sdk:log-message server "info" data :logger "notes-server")))
+
 (defun make-notes-server (&key transport
                                (summarize-async-step-sleep-seconds 10))
   (let ((server (mcp-sdk:make-server
@@ -136,6 +142,10 @@
                     (multiple-value-bind (id note)
                         (create-note (or (mcp-sdk:json-get arguments "title") "")
                                      (or (mcp-sdk:json-get arguments "body") ""))
+                      (log-notes-message server
+                                         "notes/create"
+                                         "id" id
+                                         "title" (mcp-sdk:json-get note "title"))
                       (make-object
                        "note" (note->object id note)
                        "content"
@@ -207,7 +217,9 @@
                     (declare (ignore context))
                     (let ((id (mcp-sdk:json-get arguments "id")))
                       (if (delete-note id)
-                          (note-content (format nil "deleted note ~A" id))
+                          (progn
+                            (log-notes-message server "notes/delete" "id" id)
+                            (note-content (format nil "deleted note ~A" id)))
                           (note-content (format nil "note ~A was not found" id))))))
       (mcp-sdk:register-tool
        server
@@ -221,6 +233,9 @@
        :handler #'(lambda (context arguments)
                     (declare (ignore arguments))
                     (let ((snapshot (snapshot-notes)))
+                      (log-notes-message server
+                                         "notes/summarize-async"
+                                         "count" (hash-table-count snapshot))
                       (mcp-sdk:context-report-progress context 1 3 "snapshot")
                       (sleep summarize-async-step-sleep-seconds)
                       (mcp-sdk:context-report-progress context 2 3 "summarizing")

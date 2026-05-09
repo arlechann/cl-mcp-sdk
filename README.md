@@ -13,10 +13,11 @@ Common Lisp SDK です。
 - `resources/templates/list`
 - `prompts/list` / `prompts/get`
 - `completion/complete`
+- `logging/setLevel`
 - `tasks/get` / `tasks/result` / `tasks/list` / `tasks/cancel`
 - roots capability を使った roots cache の同期
 - outbound `send-request` / `send-notification`
-- progress notification と cancellation token
+- `notifications/message` / progress notification と cancellation token
 
 ## 使い方
 
@@ -223,6 +224,17 @@ Common Lisp SDK です。
   サーバからクライアントへ notification を送信します。
   `params` は省略可能で、指定した場合は `notification` の `params` にそのまま入ります。
 
+### logging
+
+- `mcp-sdk:log-message server level data &key logger`
+  クライアントへ `notifications/message` を送ります。
+  `level` は `"debug"` / `"info"` / `"notice"` / `"warning"` / `"error"` /
+  `"critical"` / `"alert"` / `"emergency"`、または対応する keyword を受け付けます。
+  `data` には JSON serializable な値をそのまま渡します。
+  `logger` は任意の logger 名です。
+  実際に通知が送信されるのは、クライアントが `logging/setLevel` で最低ログレベルを
+  設定した後だけです。
+
 ### JSON ヘルパ
 
 - `mcp-sdk:json-encode object`
@@ -250,6 +262,7 @@ Common Lisp SDK です。
 - `:response-sent`
 - `:request-cancelled`
 - `:progress-reported`
+- `:log-message`
 - `:task-created`
 - `:task-completed`
 - `:task-failed`
