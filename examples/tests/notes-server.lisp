@@ -86,3 +86,84 @@
     (ok (equal (json-get (json-get (response-result (last-message server)) "completion")
                          '("values" 0))
                "1"))))
+
+(deftest notes-server-task-tool
+  (let ((server (make-notes-server
+                 :transport (make-instance '<test-transport>)
+                 :summarize-async-step-sleep-seconds 0.01)))
+    (handle-message server
+                    (make-request 60 "initialize"
+                                  (mcp-sdk::make-object
+                                   "protocolVersion" mcp-sdk::*default-protocol-version*)))
+    (ok (wait-for #'(lambda ()
+                      (equal 60 (json-get (last-message server) "id")))))
+    (ok (json-get (json-get (json-get (response-result (last-message server))
+                                      "capabilities")
+                            '("tasks" "requests" "tools"))
+                  "call"))
+    (handle-message server (make-notification "notifications/initialized"))
+
+    (handle-message server
+                    (make-request 61 "tools/list"))
+    (ok (wait-for #'(lambda ()
+                      (equal 61 (json-get (last-message server) "id")))))
+    (let ((tool
+            (find "notes/summarize-async"
+                  (coerce (json-get (response-result (last-message server)) "tools") 'list)
+                  :test #'string=
+                  :key #'(lambda (entry)
+                           (json-get entry "name")))))
+      (ok tool)
+      (ok (equal (json-get tool '("execution" "taskSupport"))
+                 "required")))
+
+    (handle-message server
+                    (make-request 62 "tools/call"
+                                  (mcp-sdk::make-object
+                                   "name" "notes/summarize-async"
+                                   "arguments" (mcp-sdk::make-object))))
+    (ok (wait-for #'(lambda ()
+                      (equal 62 (json-get (last-message server) "id")))))
+    (ok (= (json-get (json-get (last-message server) "error") "code")
+           mcp-sdk:+json-rpc-method-not-found-error+))
+
+    (handle-message server
+                    (make-request 63 "tools/call"
+                                  (mcp-sdk::make-object
+                                   "name" "notes/create"
+                                   "arguments" (mcp-sdk::make-object
+                                                "title" "task note"
+                                                "body" "buy milk"))))
+    (ok (wait-for #'(lambda ()
+                      (equal 63 (json-get (last-message server) "id")))))
+
+    (handle-message server
+                    (make-request 64 "tools/call"
+                                  (mcp-sdk::make-object
+                                   "name" "notes/summarize-async"
+                                   "arguments" (mcp-sdk::make-object)
+                                   "task" (mcp-sdk::make-object)
+                                   "_meta" (mcp-sdk::make-object
+                                            "progressToken" "notes-task-token"))))
+    (ok (wait-for #'(lambda ()
+                      (find-message-by-id server 64))))
+    (let ((task-id (json-get (response-result (find-message-by-id server 64))
+                             '("task" "taskId"))))
+      (ok (stringp task-id))
+      (ok (wait-for #'(lambda ()
+                        (let ((message (find-message-by-method server "notifications/progress")))
+                          (equal (json-get message
+                                           '("params" "_meta" "io.modelcontextprotocol/related-task" "taskId"))
+                                 task-id)))))
+      (handle-message server
+                      (make-request 65 "tasks/result"
+                                    (mcp-sdk::make-object "taskId" task-id)))
+      (ok (wait-for #'(lambda ()
+                        (find-message-by-id server 65))))
+      (ok (equal (json-get (response-result (find-message-by-id server 65))
+                           '("_meta" "io.modelcontextprotocol/related-task" "taskId"))
+                 task-id))
+      (ok (stringp (json-get (aref (json-get (response-result (find-message-by-id server 65))
+                                             "content")
+                                   0)
+                             "text"))))))

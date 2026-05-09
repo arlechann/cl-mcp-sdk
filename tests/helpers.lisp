@@ -21,12 +21,13 @@
   (setf (test-transport-started-p transport) nil)
   transport)
 
-(defun make-test-server ()
-  (make-server
-   :name "test-server"
-   :version "0.1.0"
-   :transport (make-instance '<test-transport>)
-   :worker-count 2))
+(defun make-test-server (&rest initargs)
+  (apply #'make-server
+         :name "test-server"
+         :version "0.1.0"
+         :transport (make-instance '<test-transport>)
+         :worker-count 2
+         initargs))
 
 (defun last-message (server)
   (car (last (test-transport-messages (mcp-sdk::server-transport server)))))
@@ -39,6 +40,15 @@
         :test #'string=
         :key #'(lambda (message)
                  (json-get message "method"))))
+
+(defun find-message-by-id (server id)
+  (find id (all-messages server)
+        :test #'equal
+        :from-end t
+        :key #'(lambda (message)
+                 (and (or (response-result message)
+                          (response-error message))
+                      (json-get message "id")))))
 
 (defun make-request (id method &optional params)
   (let ((message (mcp-sdk::make-object

@@ -327,3 +327,287 @@
                                 "values")
                      0)
                "42"))))
+
+(deftest tasks-support
+  (let ((server (make-test-server
+                 :task-default-ttl-ms 100
+                 :task-max-ttl-ms 1000
+                 :task-poll-interval-ms 10
+                 :task-list-page-size 1))
+        (task-events '()))
+    (server-on server :task-created
+               #'(lambda (task)
+                   (push (list :created (mcp-sdk::task-id task)) task-events)))
+    (server-on server :task-completed
+               #'(lambda (task result)
+                   (declare (ignore result))
+                   (push (list :completed (mcp-sdk::task-id task)) task-events)))
+    (server-on server :task-failed
+               #'(lambda (task payload)
+                   (declare (ignore payload))
+                   (push (list :failed (mcp-sdk::task-id task)) task-events)))
+    (register-tool server "slow"
+                   :task-support "optional"
+                   :handler #'(lambda (context arguments)
+                                (declare (ignore arguments))
+                                (context-report-progress context 1 2 "started")
+                                (sleep 0.05)
+                                (context-report-progress context 2 2 "done")
+                                (mcp-sdk::make-object
+                                 "content"
+                                 (vector (mcp-sdk::make-object
+                                          "type" "text"
+                                          "text" "slow done")))))
+    (register-tool server "failing-tool"
+                   :task-support "required"
+                   :handler #'(lambda (context arguments)
+                                (declare (ignore context arguments))
+                                (mcp-sdk::make-object
+                                 "content"
+                                 (vector (mcp-sdk::make-object
+                                          "type" "text"
+                                          "text" "failed"))
+                                 "isError" t)))
+    (register-tool server "sync-only"
+                   :handler #'(lambda (context arguments)
+                                (declare (ignore context arguments))
+                                (mcp-sdk::make-object
+                                 "content"
+                                 (vector (mcp-sdk::make-object
+                                          "type" "text"
+                                          "text" "sync only")))))
+
+    (handle-message server
+                    (make-request 60 "initialize"
+                                  (mcp-sdk::make-object
+                                   "protocolVersion" *default-protocol-version*)))
+    (ok (wait-for #'(lambda ()
+                      (equal 60 (json-get (last-message server) "id")))))
+    (ok (json-get (json-get (json-get (response-result (last-message server))
+                                      "capabilities")
+                            '("tasks" "requests" "tools"))
+                  "call"))
+    (handle-message server (make-notification "notifications/initialized"))
+
+    (handle-message server (make-request 61 "tools/list"))
+    (ok (wait-for #'(lambda ()
+                      (equal 61 (json-get (last-message server) "id")))))
+    (let* ((tools (coerce (json-get (response-result (last-message server)) "tools")
+                          'list))
+           (slow-tool (find "slow" tools :test #'string=
+                            :key #'(lambda (entry)
+                                     (json-get entry "name"))))
+           (failing-tool (find "failing-tool" tools :test #'string=
+                               :key #'(lambda (entry)
+                                        (json-get entry "name")))))
+      (ok (eq (getf (gethash "slow" (mcp-sdk::server-tools server))
+                    :task-support)
+              :optional))
+      (ok (eq (getf (gethash "failing-tool" (mcp-sdk::server-tools server))
+                    :task-support)
+              :required))
+      (ok (equal (json-get slow-tool '("execution" "taskSupport"))
+                 "optional"))
+      (ok (equal (json-get failing-tool '("execution" "taskSupport"))
+                 "required")))
+
+    (handle-message server
+                    (make-request 62 "tools/call"
+                                  (mcp-sdk::make-object
+                                   "name" "sync-only"
+                                   "arguments" (mcp-sdk::make-object)
+                                   "task" (mcp-sdk::make-object))))
+    (ok (wait-for #'(lambda ()
+                      (equal 62 (json-get (last-message server) "id")))))
+    (ok (= (json-get (json-get (last-message server) "error") "code")
+           +json-rpc-method-not-found-error+))
+
+    (handle-message server
+                    (make-request 63 "tools/call"
+                                  (mcp-sdk::make-object
+                                   "name" "failing-tool"
+                                   "arguments" (mcp-sdk::make-object))))
+    (ok (wait-for #'(lambda ()
+                      (equal 63 (json-get (last-message server) "id")))))
+    (ok (= (json-get (json-get (last-message server) "error") "code")
+           +json-rpc-method-not-found-error+))
+
+    (handle-message server
+                    (make-request 64 "tools/call"
+                                  (mcp-sdk::make-object
+                                   "name" "slow"
+                                   "arguments" (mcp-sdk::make-object)
+                                   "task" (mcp-sdk::make-object
+                                           "ttl" 100)
+                                   "_meta" (mcp-sdk::make-object
+                                            "progressToken" "token-64"))))
+    (ok (wait-for #'(lambda ()
+                      (find-message-by-id server 64))))
+    (let ((task (json-get (response-result (find-message-by-id server 64)) "task")))
+      (ok (equal (json-get task "status") "working"))
+      (ok (stringp (json-get task "taskId")))
+      (let ((task-id (json-get task "taskId")))
+        (ok (typep (mcp-sdk::find-task server task-id)
+                   'event-emitter:<event-emitter>))
+        (ok (eq (mcp-sdk::task-status (mcp-sdk::find-task server task-id))
+                :working))
+        (ok (wait-for #'(lambda ()
+                          (find (list :created task-id)
+                                task-events
+                                :test #'equal))))
+        (ok (wait-for #'(lambda ()
+                          (let ((message (find-message-by-method server "notifications/progress")))
+                            (equal (json-get message
+                                             '("params" "_meta" "io.modelcontextprotocol/related-task" "taskId"))
+                                   task-id)))))
+        (handle-message server
+                        (make-request 65 "tasks/get"
+                                      (mcp-sdk::make-object "taskId" task-id)))
+        (ok (wait-for #'(lambda ()
+                          (find-message-by-id server 65))))
+        (ok (member (json-get (response-result (find-message-by-id server 65)) "status")
+                    '("working" "completed")
+                    :test #'string=))
+
+        (handle-message server
+                        (make-request 66 "tasks/result"
+                                      (mcp-sdk::make-object "taskId" task-id)))
+        (ok (wait-for #'(lambda ()
+                          (find-message-by-id server 66))))
+        (ok (equal (json-get (response-result (find-message-by-id server 66))
+                             '("_meta" "io.modelcontextprotocol/related-task" "taskId"))
+                   task-id))
+        (ok (equal (json-get (aref (json-get (response-result (find-message-by-id server 66))
+                                             "content")
+                                   0)
+                             "text")
+                   "slow done"))
+        (ok (wait-for #'(lambda ()
+                          (find (list :completed task-id)
+                                task-events
+                                :test #'equal))))))
+
+    (handle-message server
+                    (make-request 67 "tools/call"
+                                  (mcp-sdk::make-object
+                                   "name" "failing-tool"
+                                   "arguments" (mcp-sdk::make-object)
+                                   "task" (mcp-sdk::make-object))))
+    (ok (wait-for #'(lambda ()
+                      (find-message-by-id server 67))))
+    (let ((task-id (json-get (response-result (find-message-by-id server 67))
+                             '("task" "taskId"))))
+      (handle-message server
+                      (make-request 68 "tasks/result"
+                                    (mcp-sdk::make-object "taskId" task-id)))
+      (ok (wait-for #'(lambda ()
+                        (find-message-by-id server 68))))
+      (ok (equal (json-get (response-result (find-message-by-id server 68)) "isError")
+                 t))
+      (handle-message server
+                      (make-request 69 "tasks/get"
+                                    (mcp-sdk::make-object "taskId" task-id)))
+      (ok (wait-for #'(lambda ()
+                        (find-message-by-id server 69))))
+      (ok (equal (json-get (response-result (find-message-by-id server 69)) "status")
+                 "failed"))
+      (ok (wait-for #'(lambda ()
+                        (find (list :failed task-id)
+                              task-events
+                              :test #'equal)))))))
+
+(deftest task-list-cancel-and-expiry
+  (let ((server (make-test-server
+                 :task-default-ttl-ms 1000
+                 :task-max-ttl-ms 1000
+                 :task-poll-interval-ms 10
+                 :task-list-page-size 1))
+        (task-events '()))
+    (server-on server :task-cancelled
+               #'(lambda (task)
+                   (push (list :cancelled (mcp-sdk::task-id task)) task-events)))
+    (server-on server :task-expired
+               #'(lambda (task-id)
+                   (push (list :expired task-id) task-events)))
+    (register-tool server "slow-cancellable"
+                   :task-support "optional"
+                   :handler #'(lambda (context arguments)
+                                (declare (ignore arguments))
+                                (loop repeat 100
+                                      until (context-cancelled-p context)
+                                      do (sleep 0.01))
+                                (mcp-sdk::make-object
+                                 "content"
+                                 (vector (mcp-sdk::make-object
+                                          "type" "text"
+                                          "text" (if (context-cancelled-p context)
+                                                     "cancelled"
+                                                     "completed"))))))
+    (handle-message server
+                    (make-request 70 "initialize"
+                                  (mcp-sdk::make-object
+                                   "protocolVersion" *default-protocol-version*)))
+    (ok (wait-for #'(lambda ()
+                      (equal 70 (json-get (last-message server) "id")))))
+    (handle-message server (make-notification "notifications/initialized"))
+
+    (flet ((create-task (request-id ttl)
+             (handle-message server
+                             (make-request request-id "tools/call"
+                                           (mcp-sdk::make-object
+                                            "name" "slow-cancellable"
+                                            "arguments" (mcp-sdk::make-object)
+                                            "task" (mcp-sdk::make-object "ttl" ttl))))
+             (ok (wait-for #'(lambda ()
+                               (find-message-by-id server request-id))))
+             (json-get (response-result (find-message-by-id server request-id))
+                       '("task" "taskId"))))
+      (let ((task-id-1 (create-task 71 1000))
+            (task-id-2 (create-task 72 1000)))
+        (handle-message server (make-request 73 "tasks/list"))
+        (ok (wait-for #'(lambda ()
+                          (find-message-by-id server 73))))
+        (ok (= (length (json-get (response-result (find-message-by-id server 73)) "tasks")) 1))
+        (ok (json-get (response-result (find-message-by-id server 73)) "nextCursor"))
+
+        (handle-message server
+                        (make-request 74 "tasks/list"
+                                      (mcp-sdk::make-object
+                                       "cursor" (json-get (response-result (find-message-by-id server 73))
+                                                          "nextCursor"))))
+        (ok (wait-for #'(lambda ()
+                          (find-message-by-id server 74))))
+        (ok (= (length (json-get (response-result (find-message-by-id server 74)) "tasks")) 1))
+
+        (handle-message server
+                        (make-request 75 "tasks/cancel"
+                                      (mcp-sdk::make-object "taskId" task-id-2)))
+        (ok (wait-for #'(lambda ()
+                          (find-message-by-id server 75))))
+        (ok (equal (json-get (response-result (find-message-by-id server 75)) "status")
+                   "cancelled"))
+        (ok (wait-for #'(lambda ()
+                          (find (list :cancelled task-id-2)
+                                task-events
+                                :test #'equal))))
+
+        (handle-message server
+                        (make-request 76 "tasks/cancel"
+                                      (mcp-sdk::make-object "taskId" task-id-2)))
+        (ok (wait-for #'(lambda ()
+                          (find-message-by-id server 76))))
+        (ok (= (json-get (json-get (find-message-by-id server 76) "error") "code")
+               +json-rpc-invalid-params-error+))
+
+        (sleep 1.1)
+        (ok (wait-for #'(lambda ()
+                          (find (list :expired task-id-1)
+                                task-events
+                                :test #'equal))))
+        (handle-message server
+                        (make-request 77 "tasks/get"
+                                      (mcp-sdk::make-object "taskId" task-id-1)))
+        (ok (wait-for #'(lambda ()
+                          (find-message-by-id server 77))))
+        (ok (= (json-get (json-get (find-message-by-id server 77) "error") "code")
+               +json-rpc-invalid-params-error+))))))

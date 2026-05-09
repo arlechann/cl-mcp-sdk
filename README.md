@@ -13,6 +13,7 @@ Common Lisp SDK です。
 - `resources/templates/list`
 - `prompts/list` / `prompts/get`
 - `completion/complete`
+- `tasks/get` / `tasks/result` / `tasks/list` / `tasks/cancel`
 - `roots/list` の outbound request
 - outbound `send-request` / `send-notification`
 - progress notification と cancellation token
@@ -51,7 +52,7 @@ Common Lisp SDK です。
 - `mcp-sdk-examples/echo-server`
   最小構成の `echo` tool だけを持つサーバです。
 - `mcp-sdk-examples/notes-server`
-  `tools` / `resources` / `prompts` をまとめて試せるノート管理サーバです。
+  `tools` / `resources` / `prompts` / `tasks` をまとめて試せるノート管理サーバです。
 
 読み込み例:
 
@@ -65,11 +66,16 @@ Common Lisp SDK です。
 
 ### サーバ生成と起動
 
-- `mcp-sdk:make-server &key name version transport (worker-count 2)`
+- `mcp-sdk:make-server &key name version transport (worker-count 2) task-default-ttl-ms task-max-ttl-ms task-poll-interval-ms task-list-page-size task-max-count`
   MCP サーバオブジェクトを生成します。
   `name` と `version` は `initialize` response の `serverInfo` に入ります。
   `transport` を省略した場合は `stdio` transport を使用します。
   `worker-count` は request 実行に使う `lparallel` worker 数です。
+  `task-default-ttl-ms` は task request に `ttl` 指定が無い場合の既定 TTL、
+  `task-max-ttl-ms` は受け付ける最大 TTL、
+  `task-poll-interval-ms` は task object に載せる polling 間隔、
+  `task-list-page-size` は `tasks/list` の既定ページサイズ、
+  `task-max-count` は保持する task 件数上限です。
 - `mcp-sdk:start-server server`
   transport の読み書きループと worker を起動します。
 - `mcp-sdk:stop-server server`
@@ -88,7 +94,7 @@ Common Lisp SDK です。
 
 ### ツール登録
 
-- `mcp-sdk:register-tool server name &key title description input-schema output-schema annotations handler`
+- `mcp-sdk:register-tool server name &key title description input-schema output-schema annotations handler task-support`
   tool を登録します。
 - `mcp-sdk:define-tool server name (context arguments) ...`
   `register-tool` の薄いマクロです。
@@ -107,6 +113,11 @@ Common Lisp SDK です。
   `arguments` は `tools/call` の `params.arguments` を表す JSON object 相当の hash-table です。
   返り値は `tools/call` response の `result` 全体としてそのまま返されます。
   典型的には `("content" [...])` を持つ object を返します。
+- `task-support`
+  tool の task 対応方針です。`"forbidden"` / `"optional"` / `"required"`、
+  または対応する keyword を受け付けます。
+  `tools/list` では `execution.taskSupport` として返されます。
+  `"required"` の tool は task 付き `tools/call` でのみ呼べます。
 
 例:
 
@@ -182,6 +193,22 @@ Common Lisp SDK です。
   cancellation token が立っているかを返します。
   強制停止は行わないため、長時間処理では handler 側が協調的に確認する想定です。
 
+### tasks
+
+- `tools/call` の `params.task`
+  tool request を非同期 task として作成します。tool が `task-support` を
+  `"optional"` または `"required"` として登録されている必要があります。
+- `tasks/get`
+  task object を返します。`taskId` を受け取り、現在の `status`、作成時刻、
+  更新時刻、TTL などを返します。
+- `tasks/result`
+  task 完了まで待機し、完了後の result または error を返します。
+  成功時の response には `_meta.io.modelcontextprotocol/related-task.taskId` を付けます。
+- `tasks/list`
+  新しい task から順に返します。`cursor` と `nextCursor` を使ったページングに対応します。
+- `tasks/cancel`
+  task の cancellation token を立て、`status` を `cancelled` に遷移させます。
+
 ### クライアントへの送信
 
 - `mcp-sdk:send-request server method &key params timeout`
@@ -220,6 +247,11 @@ Common Lisp SDK です。
 - `:response-sent`
 - `:request-cancelled`
 - `:progress-reported`
+- `:task-created`
+- `:task-completed`
+- `:task-failed`
+- `:task-cancelled`
+- `:task-expired`
 - `:handler-failed`
 - `:server-started`
 - `:server-stopped`

@@ -89,7 +89,8 @@
                (string= prefix uri :end2 (length prefix)))
       (parse-integer (subseq uri (length prefix)) :junk-allowed t))))
 
-(defun make-notes-server (&key transport)
+(defun make-notes-server (&key transport
+                               (summarize-async-step-sleep-seconds 10))
   (let ((server (mcp-sdk:make-server
                  :name "notes-server"
                  :version "0.1.0"
@@ -124,6 +125,7 @@
       (mcp-sdk:register-tool
        server
        "notes/create"
+       :task-support "forbidden"
        :title "Create Note"
        :description "タイトルと本文からノートを作成します。"
        :input-schema
@@ -143,6 +145,7 @@
       (mcp-sdk:register-tool
        server
        "notes/list"
+       :task-support "forbidden"
        :title "List Notes"
        :description "現在のノート一覧を返します。"
        :input-schema
@@ -155,6 +158,7 @@
       (mcp-sdk:register-tool
        server
        "notes/get"
+       :task-support "forbidden"
        :title "Get Note"
        :description "ID を指定してノートを返します。"
        :input-schema
@@ -175,6 +179,7 @@
       (mcp-sdk:register-tool
        server
        "notes/list-roots"
+       :task-support "forbidden"
        :title "List Roots"
        :description "クライアントが提供する roots を一覧表示します。"
        :input-schema
@@ -192,6 +197,7 @@
       (mcp-sdk:register-tool
        server
        "notes/delete"
+       :task-support "forbidden"
        :title "Delete Note"
        :description "ID を指定してノートを削除します。"
        :input-schema
@@ -203,6 +209,28 @@
                       (if (delete-note id)
                           (note-content (format nil "deleted note ~A" id))
                           (note-content (format nil "note ~A was not found" id))))))
+      (mcp-sdk:register-tool
+       server
+       "notes/summarize-async"
+       :task-support "required"
+       :title "Summarize Notes Async"
+       :description "ノート一覧を非同期 task として要約します。"
+       :input-schema
+       (schema
+        "{\"type\":\"object\",\"properties\":{}}")
+       :handler #'(lambda (context arguments)
+                    (declare (ignore arguments))
+                    (let ((snapshot (snapshot-notes)))
+                      (mcp-sdk:context-report-progress context 1 3 "snapshot")
+                      (sleep summarize-async-step-sleep-seconds)
+                      (mcp-sdk:context-report-progress context 2 3 "summarizing")
+                      (sleep summarize-async-step-sleep-seconds)
+                      (mcp-sdk:context-report-progress context 3 3 "done")
+                      (sleep summarize-async-step-sleep-seconds)
+                      (note-content
+                       (format nil
+                               "非同期要約:~%~A"
+                               (notes-index-text snapshot))))))
       (mcp-sdk:register-resource
        server
        "notes-index"

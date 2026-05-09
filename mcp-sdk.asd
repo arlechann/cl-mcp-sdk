@@ -4,6 +4,7 @@
   :license ""
   :depends-on ("alexandria"
                "event-emitter"
+               "frugal-uuid"
                "jonathan"
                "bordeaux-threads"
                "lparallel"

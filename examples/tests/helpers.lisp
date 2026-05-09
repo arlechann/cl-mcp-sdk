@@ -29,6 +29,12 @@
         :key #'(lambda (message)
                  (json-get message "method"))))
 
+(defun find-message-by-id (server id)
+  (find id (all-messages server)
+        :test #'equal
+        :key #'(lambda (message)
+                 (json-get message "id"))))
+
 (defun make-request (id method &optional params)
   (let ((message (mcp-sdk::make-object
                   "jsonrpc" "2.0"

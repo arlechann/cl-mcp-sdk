@@ -4,6 +4,7 @@
   (:use #:cl)
   (:import-from #:alexandria
                 #:copy-hash-table
+                #:deletef
                 #:if-let
                 #:when-let)
   (:import-from #:bordeaux-threads
