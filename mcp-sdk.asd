@@ -1,7 +1,7 @@
 (defsystem "mcp-sdk"
   :version "0.0.1"
-  :author ""
-  :license ""
+  :author "arlechann"
+  :license "CC0-1.0"
   :depends-on ("alexandria"
                "event-emitter"
                "frugal-uuid"
@@ -23,8 +23,8 @@
   :in-order-to ((test-op (test-op "mcp-sdk/tests"))))
 
 (defsystem "mcp-sdk/tests"
-  :author ""
-  :license ""
+  :author "arlechann"
+  :license "CC0-1.0"
   :depends-on ("mcp-sdk"
                "rove")
   :serial t
