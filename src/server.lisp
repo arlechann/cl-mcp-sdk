@@ -523,6 +523,12 @@
   (>= (elapsed-milliseconds (task-created-ticks task))
       (task-ttl-ms task)))
 
+(defun task-expiry-remaining-seconds (task)
+  (max 0.0
+       (/ (- (task-ttl-ms task)
+             (elapsed-milliseconds (task-created-ticks task)))
+          1000.0)))
+
 (defun task->object (task)
   (let ((object (make-object
                  "taskId" (task-id task)
@@ -567,13 +573,21 @@
                  :test #'string=)
         (setf expired-p t)))
     (when expired-p
-      (emit task :expired (task-id task)))))
+      (emit task :expired (task-id task)))
+    expired-p))
 
 (defun schedule-task-expiry (server task)
   (make-thread
    #'(lambda ()
-       (sleep (/ (task-ttl-ms task) 1000.0))
-       (maybe-expire-task server task))
+       ;; `sleep` can wake slightly early, so keep checking until the task is
+       ;; either removed or genuinely reaches its TTL.
+       (loop
+         (with-lock-held ((server-state-lock server))
+           (unless (gethash (task-id task) (server-tasks server))
+             (return)))
+         (when (maybe-expire-task server task)
+           (return))
+         (sleep (task-expiry-remaining-seconds task))))
    :name (format nil "mcp-sdk.task-expiry.~A" (task-id task))))
 
 (defun find-task (server task-id)
