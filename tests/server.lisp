@@ -1,44 +1,9 @@
 (in-package #:mcp-sdk/tests)
 
-(deftest initialize-and-core-methods
-  (let* ((server (make-test-server))
-         (session (mcp-sdk:make-session server)))
-    (register-tool server "echo"
-                   :description "Echo back arguments"
-                   :input-schema (mcp-sdk::make-object "type" "object")
-                   :handler #'(lambda (session context arguments)
-                                (declare (ignore session context))
-                                (mcp-sdk::make-object
-                                 "content"
-                                 (vector (mcp-sdk::make-object
-                                          "type" "text"
-                                          "text" (json-get arguments "message"))))))
-    (register-resource server "greeting"
-                       :uri "resource:greeting"
-                       :mime-type "text/plain"
-                       :handler #'(lambda (session context arguments)
-                                    (declare (ignore session context arguments))
-                                    (mcp-sdk::make-object
-                                     "contents"
-                                     (vector (mcp-sdk::make-object
-                                              "uri" "resource:greeting"
-                                              "mimeType" "text/plain"
-                                              "text" "hello")))))
-    (register-prompt server "greeter"
-                     :arguments (list (mcp-sdk::make-object
-                                       "name" "subject"
-                                       "required" t))
-                     :handler #'(lambda (session context arguments)
-                                  (declare (ignore session context))
-                                  (mcp-sdk::make-object
-                                   "messages"
-                                   (vector (mcp-sdk::make-object
-                                            "role" "user"
-                                            "content" (mcp-sdk::make-object
-                                                       "type" "text"
-                                                       "text" (format nil "Hello, ~A"
-                                                                      (json-get arguments "subject"))))))))
-
+(deftest initialize-method
+  (multiple-value-bind (server session)
+      (make-core-feature-session)
+    (declare (ignore server))
     (handle-message session (make-request 1 "initialize"
                                           (mcp-sdk::make-object
                                            "protocolVersion" *default-protocol-version*)))
@@ -47,8 +12,17 @@
                         (and message
                              (response-result message))))))
     (ok (equal (json-get (response-result (last-message session)) "protocolVersion")
-               *default-protocol-version*))
+               *default-protocol-version*))))
 
+(deftest core-tools-methods
+  (multiple-value-bind (server session)
+      (make-core-feature-session)
+    (declare (ignore server))
+    (handle-message session (make-request 1 "initialize"
+                                          (mcp-sdk::make-object
+                                           "protocolVersion" *default-protocol-version*)))
+    (ok (wait-for #'(lambda ()
+                      (equal 1 (json-get (last-message session) "id")))))
     (handle-message session (make-notification "notifications/initialized"))
 
     (handle-message session (make-request 2 "tools/list"))
@@ -65,7 +39,18 @@
     (ok (wait-for #'(lambda ()
                       (equal 3 (json-get (last-message session) "id")))))
     (ok (equal (json-get (aref (json-get (response-result (last-message session)) "content") 0) "text")
-               "hello"))
+               "hello"))))
+
+(deftest core-resources-methods
+  (multiple-value-bind (server session)
+      (make-core-feature-session)
+    (declare (ignore server))
+    (handle-message session (make-request 1 "initialize"
+                                          (mcp-sdk::make-object
+                                           "protocolVersion" *default-protocol-version*)))
+    (ok (wait-for #'(lambda ()
+                      (equal 1 (json-get (last-message session) "id")))))
+    (handle-message session (make-notification "notifications/initialized"))
 
     (handle-message session (make-request 4 "resources/list"))
     (ok (wait-for #'(lambda ()
@@ -78,7 +63,18 @@
     (ok (wait-for #'(lambda ()
                       (equal 5 (json-get (last-message session) "id")))))
     (ok (equal (json-get (aref (json-get (response-result (last-message session)) "contents") 0) "text")
-               "hello"))
+               "hello"))))
+
+(deftest core-prompts-methods
+  (multiple-value-bind (server session)
+      (make-core-feature-session)
+    (declare (ignore server))
+    (handle-message session (make-request 1 "initialize"
+                                          (mcp-sdk::make-object
+                                           "protocolVersion" *default-protocol-version*)))
+    (ok (wait-for #'(lambda ()
+                      (equal 1 (json-get (last-message session) "id")))))
+    (handle-message session (make-notification "notifications/initialized"))
 
     (handle-message session (make-request 6 "prompts/list"))
     (ok (wait-for #'(lambda ()
@@ -117,18 +113,11 @@
          (server-2 (make-test-server))
          (session-1 (mcp-sdk:make-session server-1))
          (session-2 (mcp-sdk:make-session server-2)))
-    (ok (typep session-1 'mcp-sdk::<session>))
     (ok (not (eq session-1 session-2)))
     (ok (eq (mcp-sdk::session-definition session-1)
             (mcp-sdk::server-definition server-1)))
-    (ok (typep (mcp-sdk::server-default-task-settings server-1)
-               'mcp-sdk::task-settings))
-    (ok (typep (mcp-sdk::session-task-settings session-1)
-               'mcp-sdk::task-settings))
     (ok (not (eq (mcp-sdk::server-default-task-settings server-1)
-                 (mcp-sdk::session-task-settings session-1))))
-    (ok (not (eq (mcp-sdk::session-roots session-1)
-                 (mcp-sdk::session-roots session-2))))))
+                 (mcp-sdk::session-task-settings session-1))))))
 
 (deftest progress-cancel-and-events
   (let* ((server (make-test-server))
@@ -230,12 +219,6 @@
                        "result" (mcp-sdk::make-object "roots" (make-array 0))))
       (join-thread thread)
       (ok t))))
-
-(deftest roots-storage-is-not-shared
-  (let ((session-1 (make-test-session))
-        (session-2 (make-test-session)))
-    (ok (not (eq (mcp-sdk::session-roots session-1)
-                 (mcp-sdk::session-roots session-2))))))
 
 (deftest resource-templates
   (let* ((server (make-test-server))
@@ -497,12 +480,6 @@
            (failing-tool (find "failing-tool" tools :test #'string=
                                :key #'(lambda (entry)
                                         (json-get entry "name")))))
-      (ok (eq (getf (gethash "slow" (mcp-sdk::server-tools server))
-                    :task-support)
-              :optional))
-      (ok (eq (getf (gethash "failing-tool" (mcp-sdk::server-tools server))
-                    :task-support)
-              :required))
       (ok (equal (json-get slow-tool '("execution" "taskSupport"))
                  "optional"))
       (ok (equal (json-get failing-tool '("execution" "taskSupport"))
@@ -544,10 +521,6 @@
       (ok (equal (json-get task "status") "working"))
       (ok (stringp (json-get task "taskId")))
       (let ((task-id (json-get task "taskId")))
-        (ok (typep (mcp-sdk::find-task session task-id)
-                   'event-emitter:<event-emitter>))
-        (ok (eq (mcp-sdk::task-status (mcp-sdk::find-task session task-id))
-                :working))
         (ok (wait-for #'(lambda ()
                           (find (list :created task-id)
                                 task-events

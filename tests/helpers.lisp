@@ -32,6 +32,46 @@
 (defun make-test-session (&rest initargs)
   (mcp-sdk:make-session (apply #'make-test-server initargs)))
 
+(defun make-core-feature-session ()
+  (let* ((server (make-test-server))
+         (session (mcp-sdk:make-session server)))
+    (register-tool server "echo"
+                   :description "Echo back arguments"
+                   :input-schema (mcp-sdk::make-object "type" "object")
+                   :handler #'(lambda (session context arguments)
+                                (declare (ignore session context))
+                                (mcp-sdk::make-object
+                                 "content"
+                                 (vector (mcp-sdk::make-object
+                                          "type" "text"
+                                          "text" (json-get arguments "message"))))))
+    (register-resource server "greeting"
+                       :uri "resource:greeting"
+                       :mime-type "text/plain"
+                       :handler #'(lambda (session context arguments)
+                                    (declare (ignore session context arguments))
+                                    (mcp-sdk::make-object
+                                     "contents"
+                                     (vector (mcp-sdk::make-object
+                                              "uri" "resource:greeting"
+                                              "mimeType" "text/plain"
+                                              "text" "hello")))))
+    (register-prompt server "greeter"
+                     :arguments (list (mcp-sdk::make-object
+                                       "name" "subject"
+                                       "required" t))
+                     :handler #'(lambda (session context arguments)
+                                  (declare (ignore session context))
+                                  (mcp-sdk::make-object
+                                   "messages"
+                                   (vector (mcp-sdk::make-object
+                                            "role" "user"
+                                            "content" (mcp-sdk::make-object
+                                                       "type" "text"
+                                                       "text" (format nil "Hello, ~A"
+                                                                      (json-get arguments "subject"))))))))
+    (values server session)))
+
 (defun last-message (session)
   (car (last (test-transport-messages (mcp-sdk::session-transport session)))))
 

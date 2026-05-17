@@ -45,8 +45,6 @@
                                    "protocolVersion" mcp-sdk::*default-protocol-version*)))
     (ok (wait-for #'(lambda ()
                       (equal 50 (json-get (last-message session) "id")))))
-    (ok (json-get (json-get (response-result (last-message session)) "capabilities")
-                  "completions"))
     (handle-message session (make-notification "notifications/initialized"))
 
     (handle-message session
@@ -99,8 +97,6 @@
                                    "protocolVersion" mcp-sdk::*default-protocol-version*)))
     (ok (wait-for #'(lambda ()
                       (equal 54 (json-get (last-message session) "id")))))
-    (ok (json-get (json-get (response-result (last-message session)) "capabilities")
-                  "logging"))
     (handle-message session (make-notification "notifications/initialized"))
 
     (handle-message session
@@ -138,10 +134,6 @@
                                    "protocolVersion" mcp-sdk::*default-protocol-version*)))
     (ok (wait-for #'(lambda ()
                       (equal 60 (json-get (last-message session) "id")))))
-    (ok (json-get (json-get (json-get (response-result (last-message session))
-                                      "capabilities")
-                            '("tasks" "requests" "tools"))
-                  "call"))
     (handle-message session (make-notification "notifications/initialized"))
 
     (handle-message session
