@@ -89,11 +89,11 @@
                (string= prefix uri :end2 (length prefix)))
       (parse-integer (subseq uri (length prefix)) :junk-allowed t))))
 
-(defun log-notes-message (server operation &rest entries)
+(defun log-notes-message (session operation &rest entries)
   (let ((data (apply #'make-object
                      "operation" operation
                      entries)))
-    (mcp-sdk:log-message server "info" data :logger "notes-server")))
+    (mcp-sdk:log-message session "info" data :logger "notes-server")))
 
 (defun make-notes-server (&key transport
                                (summarize-async-step-sleep-seconds 10))
@@ -137,12 +137,12 @@
        :input-schema
        (schema
         "{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\"},\"body\":{\"type\":\"string\"}},\"required\":[\"title\",\"body\"]}")
-       :handler #'(lambda (context arguments)
+       :handler #'(lambda (session context arguments)
                     (declare (ignore context))
                     (multiple-value-bind (id note)
                         (create-note (or (mcp-sdk:json-get arguments "title") "")
                                      (or (mcp-sdk:json-get arguments "body") ""))
-                      (log-notes-message server
+                      (log-notes-message session
                                          "notes/create"
                                          "id" id
                                          "title" (mcp-sdk:json-get note "title"))
@@ -161,8 +161,8 @@
        :input-schema
        (schema
         "{\"type\":\"object\",\"properties\":{}}")
-       :handler #'(lambda (context arguments)
-                    (declare (ignore context arguments))
+       :handler #'(lambda (session context arguments)
+                    (declare (ignore session context arguments))
                     (let ((snapshot (snapshot-notes)))
                       (note-content (notes-index-text snapshot)))))
       (mcp-sdk:register-tool
@@ -174,8 +174,8 @@
        :input-schema
        (schema
         "{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"integer\"}},\"required\":[\"id\"]}")
-       :handler #'(lambda (context arguments)
-                    (declare (ignore context))
+       :handler #'(lambda (session context arguments)
+                    (declare (ignore session context))
                     (let* ((id (mcp-sdk:json-get arguments "id"))
                            (note (find-note id)))
                       (if note
@@ -195,9 +195,9 @@
        :input-schema
        (schema
         "{\"type\":\"object\",\"properties\":{}}")
-       :handler #'(lambda (context arguments)
+       :handler #'(lambda (session context arguments)
                     (declare (ignore context arguments))
-                    (let ((roots (coerce (mcp-sdk:current-roots server) 'vector)))
+                    (let ((roots (coerce (mcp-sdk:current-roots session) 'vector)))
                       (make-object
                        "roots" roots
                        "content"
@@ -213,12 +213,12 @@
        :input-schema
        (schema
         "{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"integer\"}},\"required\":[\"id\"]}")
-       :handler #'(lambda (context arguments)
+       :handler #'(lambda (session context arguments)
                     (declare (ignore context))
                     (let ((id (mcp-sdk:json-get arguments "id")))
                       (if (delete-note id)
                           (progn
-                            (log-notes-message server "notes/delete" "id" id)
+                            (log-notes-message session "notes/delete" "id" id)
                             (note-content (format nil "deleted note ~A" id)))
                           (note-content (format nil "note ~A was not found" id))))))
       (mcp-sdk:register-tool
@@ -230,10 +230,10 @@
        :input-schema
        (schema
         "{\"type\":\"object\",\"properties\":{}}")
-       :handler #'(lambda (context arguments)
+       :handler #'(lambda (session context arguments)
                     (declare (ignore arguments))
                     (let ((snapshot (snapshot-notes)))
-                      (log-notes-message server
+                      (log-notes-message session
                                          "notes/summarize-async"
                                          "count" (hash-table-count snapshot))
                       (mcp-sdk:context-report-progress context 1 3 "snapshot")
@@ -252,8 +252,8 @@
        :uri "note://index"
        :description "ノート一覧を返します。"
        :mime-type "text/plain"
-       :handler #'(lambda (context params)
-                    (declare (ignore context params))
+       :handler #'(lambda (session context params)
+                    (declare (ignore session context params))
                     (let ((snapshot (snapshot-notes)))
                       (make-object
                        "contents"
@@ -267,8 +267,8 @@
        :uri "note://latest"
        :description "最新のノートを返します。"
        :mime-type "text/plain"
-       :handler #'(lambda (context params)
-                    (declare (ignore context params))
+       :handler #'(lambda (session context params)
+                    (declare (ignore session context params))
                     (let* ((snapshot (snapshot-notes))
                            (id (latest-note-id snapshot))
                            (note (and id (gethash id snapshot))))
@@ -289,8 +289,8 @@
        :uri-template "note://{id}"
        :description "ID を含む URI からノートを返します。"
        :mime-type "text/plain"
-       :completion-handler #'(lambda (context argument context-arguments)
-                               (declare (ignore context context-arguments))
+       :completion-handler #'(lambda (session context argument context-arguments)
+                               (declare (ignore session context context-arguments))
                                (let* ((snapshot (snapshot-notes))
                                       (candidates
                                         (loop for id in (sorted-note-ids snapshot)
@@ -298,8 +298,8 @@
                                  (complete-from-candidates
                                   (mcp-sdk:json-get argument "value")
                                   candidates)))
-       :handler #'(lambda (context params)
-                    (declare (ignore context))
+       :handler #'(lambda (session context params)
+                    (declare (ignore session context))
                     (let* ((uri (mcp-sdk:json-get params "uri"))
                            (id (note-id-from-uri uri))
                            (note (and id (find-note id))))
@@ -323,13 +323,13 @@
               "name" "focus"
               "description" "要約で重点的に扱いたい観点"
               "required" :false))
-       :completion-handler #'(lambda (context argument context-arguments)
-                               (declare (ignore context context-arguments))
+       :completion-handler #'(lambda (session context argument context-arguments)
+                               (declare (ignore session context context-arguments))
                                (complete-from-candidates
                                 (mcp-sdk:json-get argument "value")
                                 '("重要な論点" "TODO" "アイデア" "決定事項")))
-       :handler #'(lambda (context arguments)
-                    (declare (ignore context))
+       :handler #'(lambda (session context arguments)
+                    (declare (ignore session context))
                     (let* ((snapshot (snapshot-notes))
                            (focus (or (mcp-sdk:json-get arguments "focus")
                                       "重要な論点"))
@@ -349,8 +349,8 @@
               "name" "id"
               "description" "整形対象のノート ID"
               "required" t))
-       :handler #'(lambda (context arguments)
-                    (declare (ignore context))
+       :handler #'(lambda (session context arguments)
+                    (declare (ignore session context))
                     (let* ((id (mcp-sdk:json-get arguments "id"))
                            (note (find-note id))
                            (prompt

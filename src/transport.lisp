@@ -34,19 +34,21 @@
   message)
 
 (defmethod start-transport ((transport <stdio-transport>) server)
-  (setf (transport-running-p transport) t)
-  (setf (transport-read-thread transport)
-        (make-thread
-         #'(lambda ()
-             (loop while (transport-running-p transport)
-                   for line = (read-line (transport-input transport) nil nil)
-                   while line
-                   do (handler-case
-                          (handle-message server (json-decode line))
-                        (error (condition)
-                          (declare (ignore condition))))
-                   finally (setf (transport-running-p transport) nil)))
-         :name "mcp-sdk.stdio.read-loop"))
+  (let ((session (make-session server)))
+    (ensure-kernel session)
+    (setf (transport-running-p transport) t)
+    (setf (transport-read-thread transport)
+          (make-thread
+           #'(lambda ()
+               (loop while (transport-running-p transport)
+                     for line = (read-line (transport-input transport) nil nil)
+                     while line
+                     do (handler-case
+                            (handle-message session (json-decode line))
+                          (error (condition)
+                            (declare (ignore condition))))
+                     finally (setf (transport-running-p transport) nil)))
+           :name "mcp-sdk.stdio.read-loop")))
   transport)
 
 (defmethod stop-transport ((transport <stdio-transport>))

@@ -29,20 +29,23 @@
          :worker-count 2
          initargs))
 
-(defun last-message (server)
-  (car (last (test-transport-messages (mcp-sdk::server-transport server)))))
+(defun make-test-session (&rest initargs)
+  (mcp-sdk:make-session (apply #'make-test-server initargs)))
 
-(defun all-messages (server)
-  (test-transport-messages (mcp-sdk::server-transport server)))
+(defun last-message (session)
+  (car (last (test-transport-messages (mcp-sdk::session-transport session)))))
 
-(defun find-message-by-method (server method)
-  (find method (all-messages server)
+(defun all-messages (session)
+  (test-transport-messages (mcp-sdk::session-transport session)))
+
+(defun find-message-by-method (session method)
+  (find method (all-messages session)
         :test #'string=
         :key #'(lambda (message)
                  (json-get message "method"))))
 
-(defun find-message-by-id (server id)
-  (find id (all-messages server)
+(defun find-message-by-id (session id)
+  (find id (all-messages session)
         :test #'equal
         :from-end t
         :key #'(lambda (message)

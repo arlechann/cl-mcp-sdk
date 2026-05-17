@@ -6,10 +6,8 @@
    (lock :initform (make-lock "mcp-sdk.cancellation-token.lock")
          :reader cancellation-token-lock)))
 
-(defclass <request-context> ()
-  ((server :initarg :server
-           :reader context-server)
-   (id :initarg :id
+(defclass <request-context> (<event-emitter>)
+  ((id :initarg :id
        :reader context-id)
    (request :initarg :request
             :reader context-request)
@@ -22,6 +20,60 @@
             :reader context-task-id)
    (cancellation-token :initarg :cancellation-token
                        :reader context-cancellation-token)))
+
+(defstruct task-settings
+  (default-ttl-ms 60000 :type integer)
+  (max-ttl-ms 300000 :type integer)
+  (poll-interval-ms 1000 :type integer)
+  (list-page-size 50 :type integer)
+  (max-count 1000 :type integer))
+
+(defclass <server-definition> ()
+  ((name :initarg :name
+         :reader definition-name)
+   (version :initarg :version
+            :reader definition-version)
+   (tools :initform (make-hash-table :test #'equal)
+          :reader definition-tools)
+   (resources :initform (make-hash-table :test #'equal)
+              :reader definition-resources)
+   (prompts :initform (make-hash-table :test #'equal)
+            :reader definition-prompts)))
+
+(defclass <session> (<event-emitter>)
+  ((definition :initarg :definition
+               :reader session-definition)
+   (transport :initarg :transport
+              :reader session-transport)
+   (worker-count :initarg :worker-count
+                 :initform 2
+                 :reader session-worker-count)
+   (kernel :initform nil
+           :accessor session-kernel)
+   (started-p :initform nil
+              :accessor session-started-p)
+   (initialized-p :initform nil
+                  :accessor session-initialized-p)
+   (state-lock :initform (make-lock "mcp-sdk.session.state-lock")
+               :reader session-state-lock)
+   (active-requests :initform (make-hash-table :test #'equal)
+                    :reader session-active-requests)
+   (pending-outbound :initform (make-hash-table :test #'equal)
+                     :reader session-pending-outbound)
+   (tasks :initform (make-hash-table :test #'equal)
+          :reader session-tasks)
+   (task-order :initform '()
+               :accessor session-task-order)
+   (client-capabilities :initform (make-object)
+                        :accessor session-client-capabilities)
+   (logging-level :initform nil
+                  :accessor session-logging-level)
+   (roots :initform (make-array 0)
+          :accessor session-roots)
+   (task-settings :initarg :task-settings
+                  :reader session-task-settings)
+   (next-request-id :initform 0
+                    :accessor session-next-request-id)))
 
 (defclass <pending-request> ()
   ((lock :initform (make-lock "mcp-sdk.pending-request.lock")
@@ -71,66 +123,48 @@
                        :reader task-cancellation-token)))
 
 (defclass <server> (<event-emitter>)
-  ((name :initarg :name
-         :reader server-name)
-   (version :initarg :version
-            :reader server-version)
+  ((definition :initarg :definition
+               :reader server-definition)
    (transport :initarg :transport
               :reader server-transport)
    (worker-count :initarg :worker-count
                  :initform 2
                  :reader server-worker-count)
-   (kernel :initform nil
-           :accessor server-kernel)
+   (default-task-settings :initarg :default-task-settings
+                          :reader server-default-task-settings)
    (started-p :initform nil
               :accessor server-started-p)
-   (initialized-p :initform nil
-                  :accessor server-initialized-p)
-   (state-lock :initform (make-lock "mcp-sdk.server.state-lock")
-               :reader server-state-lock)
-   (tools :initform (make-hash-table :test #'equal)
-          :reader server-tools)
-   (resources :initform (make-hash-table :test #'equal)
-              :reader server-resources)
-   (prompts :initform (make-hash-table :test #'equal)
-            :reader server-prompts)
-   (active-requests :initform (make-hash-table :test #'equal)
-                    :reader server-active-requests)
-   (pending-outbound :initform (make-hash-table :test #'equal)
-                     :reader server-pending-outbound)
-   (tasks :initform (make-hash-table :test #'equal)
-          :reader server-tasks)
-   (task-order :initform '()
-               :accessor server-task-order)
-   (client-capabilities :initform (make-object)
-                        :accessor server-client-capabilities)
-   (logging-level :initform nil
-                  :accessor server-logging-level)
-   (roots :initform (make-array 0)
-          :accessor server-roots)
-   (task-default-ttl-ms :initarg :task-default-ttl-ms
-                        :initform 60000
-                        :reader server-task-default-ttl-ms)
-   (task-max-ttl-ms :initarg :task-max-ttl-ms
-                    :initform 300000
-                    :reader server-task-max-ttl-ms)
-   (task-poll-interval-ms :initarg :task-poll-interval-ms
-                          :initform 1000
-                          :reader server-task-poll-interval-ms)
-   (task-list-page-size :initarg :task-list-page-size
-                        :initform 50
-                        :reader server-task-list-page-size)
-   (task-max-count :initarg :task-max-count
-                   :initform 1000
-                   :reader server-task-max-count)
-   (next-request-id :initform 0
-                    :accessor server-next-request-id)))
+   (sessions-lock :initform (make-lock "mcp-sdk.server.sessions-lock")
+                  :reader server-sessions-lock)
+   (sessions :initform '()
+             :accessor server-sessions)))
+
+(defun server-name (server)
+  (definition-name (server-definition server)))
+
+(defun server-version (server)
+  (definition-version (server-definition server)))
+
+(defun server-tools (server)
+  (definition-tools (server-definition server)))
+
+(defun server-resources (server)
+  (definition-resources (server-definition server)))
+
+(defun server-prompts (server)
+  (definition-prompts (server-definition server)))
 
 (defun server-on (server event listener)
   (on server event listener))
 
 (defun server-off (server event listener)
   (off server event listener))
+
+(defun session-on (session event listener)
+  (on session event listener))
+
+(defun session-off (session event listener)
+  (off session event listener))
 
 (defun make-server (&key name
                          version
@@ -141,25 +175,58 @@
                          (task-poll-interval-ms 1000)
                          (task-list-page-size 50)
                          (task-max-count 1000))
-  (make-instance '<server>
-                 :name name
-                 :version version
-                 :transport (or transport (make-stdio-transport))
-                 :worker-count worker-count
-                 :task-default-ttl-ms task-default-ttl-ms
-                 :task-max-ttl-ms task-max-ttl-ms
-                 :task-poll-interval-ms task-poll-interval-ms
-                 :task-list-page-size task-list-page-size
-                 :task-max-count task-max-count))
+  (make-instance
+   '<server>
+   :definition
+   (make-instance '<server-definition>
+                  :name name
+                  :version version)
+   :default-task-settings
+   (make-task-settings
+    :default-ttl-ms task-default-ttl-ms
+    :max-ttl-ms task-max-ttl-ms
+    :poll-interval-ms task-poll-interval-ms
+    :list-page-size task-list-page-size
+    :max-count task-max-count)
+   :transport (or transport (make-stdio-transport))
+   :worker-count worker-count))
 
-(defun ensure-kernel (server)
-  (or (server-kernel server)
-      (setf (server-kernel server)
-            (lparallel:make-kernel (server-worker-count server)))))
+(defun make-session (server)
+  (let ((session (make-instance '<session>
+                                :definition (server-definition server)
+                                :transport (server-transport server)
+                                :worker-count (server-worker-count server)
+                                :task-settings
+                                 (copy-task-settings
+                                  (server-default-task-settings server)))))
+    (with-lock-held ((server-sessions-lock server))
+      (push session (server-sessions server)))
+    (on session :destroy-requested
+        #'(lambda (destroyed-session)
+            (finalize-session-destruction server destroyed-session)))
+    session))
 
-(defun next-request-id (server)
-  (with-lock-held ((server-state-lock server))
-    (incf (server-next-request-id server))))
+(defun finalize-session-destruction (server session)
+  (when (session-kernel session)
+    (let ((lparallel:*kernel* (session-kernel session)))
+      (lparallel:end-kernel :wait t))
+    (setf (session-kernel session) nil))
+  (with-lock-held ((server-sessions-lock server))
+    (setf (server-sessions server)
+          (delete session (server-sessions server)))))
+
+(defun destroy-session (session)
+  (emit session :destroy-requested session)
+  session)
+
+(defun ensure-kernel (session)
+  (or (session-kernel session)
+      (setf (session-kernel session)
+            (lparallel:make-kernel (session-worker-count session)))))
+
+(defun next-request-id (session)
+  (with-lock-held ((session-state-lock session))
+    (incf (session-next-request-id session))))
 
 (defun now-ticks ()
   (get-internal-real-time))
@@ -228,14 +295,11 @@
           (setf (gethash "message" payload) message))
         (when (context-task-id context)
           (attach-related-task-meta payload (context-task-id context)))
-        (emit (context-server context) :progress-reported context payload)
-        (send-notification (context-server context)
-                           "notifications/progress"
-                           payload)))))
+        (emit context :progress payload)))))
 
-(defun current-roots (server)
-  (with-lock-held ((server-state-lock server))
-    (deep-copy-object (server-roots server))))
+(defun current-roots (session)
+  (with-lock-held ((session-state-lock session))
+    (deep-copy-object (session-roots session))))
 
 (defun normalize-task-support (task-support)
   (etypecase task-support
@@ -311,22 +375,22 @@
     (:alert 1)
     (:emergency 0)))
 
-(defun logging-enabled-p (server level)
-  (let ((minimum-level (server-logging-level server)))
+(defun logging-enabled-p (session level)
+  (let ((minimum-level (session-logging-level session)))
     (and minimum-level
          (<= (logging-level-priority (normalize-logging-level level))
              (logging-level-priority minimum-level)))))
 
-(defun log-message (server level data &key logger)
+(defun log-message (session level data &key logger)
   (let ((normalized-level (normalize-logging-level level)))
-    (when (logging-enabled-p server normalized-level)
+    (when (logging-enabled-p session normalized-level)
       (let ((params (make-object
                      "level" (logging-level-name normalized-level)
                      "data" data)))
         (when logger
           (setf (gethash "logger" params) logger))
-        (send-notification server "notifications/message" params)
-        (emit server :log-message server params))))
+        (send-notification session "notifications/message" params)
+        (emit session :log-message session params))))
   nil)
 
 (defun register-descriptor (table name descriptor)
@@ -368,19 +432,19 @@
          :handler handler
          :completion-handler completion-handler)))
 
-(defmacro define-tool (server name (&optional context arguments) &body body)
+(defmacro define-tool (server name lambda-list &body body)
   `(register-tool ,server ,name
-                  :handler #'(lambda (,context ,arguments)
+                  :handler #'(lambda ,lambda-list
                                ,@body)))
 
-(defmacro define-resource (server name (&optional context arguments) &body body)
+(defmacro define-resource (server name lambda-list &body body)
   `(register-resource ,server ,name
-                      :handler #'(lambda (,context ,arguments)
+                      :handler #'(lambda ,lambda-list
                                    ,@body)))
 
-(defmacro define-prompt (server name (&optional context arguments) &body body)
+(defmacro define-prompt (server name lambda-list &body body)
   `(register-prompt ,server ,name
-                    :handler #'(lambda (,context ,arguments)
+                    :handler #'(lambda ,lambda-list
                                  ,@body)))
 
 (defvar *descriptor-object-fields*
@@ -408,7 +472,16 @@
              "taskSupport" (task-support-name (getf descriptor :task-support)))))
     object))
 
-(defun capabilities-object (server)
+(defun attach-context-session-events (session context)
+  (on context :progress
+      #'(lambda (payload)
+          (emit session :progress-reported context payload)
+          (send-notification session
+                             "notifications/progress"
+                             payload)))
+  context)
+
+(defun capabilities-object (definition)
   (let ((capabilities (make-object
                        "prompts" (make-object)
                        "resources" (make-object)
@@ -422,56 +495,56 @@
                                 "call" (make-object)))))
     (setf (gethash "logging" capabilities)
           (make-object))
-    (when (or (loop for descriptor being the hash-values of (server-prompts server)
+    (when (or (loop for descriptor being the hash-values of (definition-prompts definition)
                     thereis (getf descriptor :completion-handler))
-              (loop for descriptor being the hash-values of (server-resources server)
+              (loop for descriptor being the hash-values of (definition-resources definition)
                     thereis (getf descriptor :completion-handler)))
       (setf (gethash "completions" capabilities)
             (make-object)))
     capabilities))
 
-(defun implementation-object (server)
+(defun implementation-object (definition)
   (make-object
-   "name" (server-name server)
-   "version" (server-version server)))
+   "name" (definition-name definition)
+   "version" (definition-version definition)))
 
-(defun roots-capability-p (server)
-  (json-get (server-client-capabilities server) "roots"))
+(defun roots-capability-p (session)
+  (json-get (session-client-capabilities session) "roots"))
 
-(defun refresh-roots (server &key timeout)
-  (unless (roots-capability-p server)
+(defun refresh-roots (session &key timeout)
+  (unless (roots-capability-p session)
     (raise-mcp-error +json-rpc-invalid-request-error+
                      "Client does not advertise roots capability"))
-  (let ((roots (or (json-get (send-request server "roots/list" :timeout timeout) "roots")
+  (let ((roots (or (json-get (send-request session "roots/list" :timeout timeout) "roots")
                    (make-array 0))))
-    (with-lock-held ((server-state-lock server))
-      (setf (server-roots server) roots))
+    (with-lock-held ((session-state-lock session))
+      (setf (session-roots session) roots))
     roots))
 
-(defun refresh-roots-async (server &key timeout)
+(defun refresh-roots-async (session &key timeout)
   (make-thread
    #'(lambda ()
        (handler-case
-           (refresh-roots server :timeout timeout)
+           (refresh-roots session :timeout timeout)
          (error ()
            nil)))
    :name "mcp-sdk.refresh-roots"))
 
-(defun send-response (server id result)
-  (transport-send-message (server-transport server)
+(defun send-response (session id result)
+  (transport-send-message (session-transport session)
                           (make-success-response id result)))
 
-(defun send-error (server id code message &optional data)
-  (transport-send-message (server-transport server)
+(defun send-error (session id code message &optional data)
+  (transport-send-message (session-transport session)
                           (make-error-response id code message data)))
 
-(defun send-notification (server method &optional params)
+(defun send-notification (session method &optional params)
   (let ((message (make-object
                   "jsonrpc" "2.0"
                   "method" method)))
     (when params
       (setf (gethash "params" message) params))
-    (transport-send-message (server-transport server) message)))
+    (transport-send-message (session-transport session) message)))
 
 (defun resolve-pending-request (pending message)
   (with-lock-held ((pending-request-lock pending))
@@ -480,8 +553,8 @@
     (condition-notify (pending-request-condition-variable pending)))
   pending)
 
-(defun send-request (server method &key params timeout)
-  (let* ((id (next-request-id server))
+(defun send-request (session method &key params timeout)
+  (let* ((id (next-request-id session))
          (pending (make-instance '<pending-request>))
          (message (make-object
                    "jsonrpc" "2.0"
@@ -489,10 +562,10 @@
                    "method" method)))
     (when params
       (setf (gethash "params" message) params))
-    (setf (gethash id (server-pending-outbound server)) pending)
+    (setf (gethash id (session-pending-outbound session)) pending)
     (unwind-protect
          (progn
-           (transport-send-message (server-transport server) message)
+           (transport-send-message (session-transport session) message)
            (with-lock-held ((pending-request-lock pending))
              (loop until (pending-request-resolved-p pending)
                    do (if timeout
@@ -506,18 +579,18 @@
                  (let ((error-object (json-get response "error")))
                    (raise-mcp-error
                     (json-get error-object "code")
-                    (json-get error-object "message")
-                    (json-get error-object "data")))
+                   (json-get error-object "message")
+                   (json-get error-object "data")))
                  (json-get response "result"))))
-      (remhash id (server-pending-outbound server)))))
+      (remhash id (session-pending-outbound session)))))
 
-(defun normalize-task-ttl-ms (server params)
+(defun normalize-task-ttl-ms (session params)
   (let ((requested-ttl (json-get (ensure-object (json-get params "task")) "ttl")))
     (if (and (numberp requested-ttl)
              (plusp requested-ttl))
         (min (floor requested-ttl)
-             (server-task-max-ttl-ms server))
-        (server-task-default-ttl-ms server))))
+             (task-settings-max-ttl-ms (session-task-settings session)))
+        (task-settings-default-ttl-ms (session-task-settings session)))))
 
 (defun task-expired-p (task)
   (>= (elapsed-milliseconds (task-created-ticks task))
@@ -546,29 +619,29 @@
   (raise-mcp-error +json-rpc-invalid-params-error+
                    (format nil "Unknown taskId: ~A" task-id)))
 
-(defun cleanup-expired-tasks (server)
+(defun cleanup-expired-tasks (session)
   (let ((expired-tasks '()))
-    (with-lock-held ((server-state-lock server))
+    (with-lock-held ((session-state-lock session))
       (maphash #'(lambda (task-id task)
                    (declare (ignore task-id))
                    (when (task-expired-p task)
                      (push task expired-tasks)))
-               (server-tasks server))
+               (session-tasks session))
       (dolist (task expired-tasks)
-        (remhash (task-id task) (server-tasks server))
-        (deletef (server-task-order server)
+        (remhash (task-id task) (session-tasks session))
+        (deletef (session-task-order session)
                  (task-id task)
                  :test #'string=)))
     (dolist (task expired-tasks)
       (emit task :expired (task-id task)))))
 
-(defun maybe-expire-task (server task)
+(defun maybe-expire-task (session task)
   (let ((expired-p nil))
-    (with-lock-held ((server-state-lock server))
-      (when (and (gethash (task-id task) (server-tasks server))
+    (with-lock-held ((session-state-lock session))
+      (when (and (gethash (task-id task) (session-tasks session))
                  (task-expired-p task))
-        (remhash (task-id task) (server-tasks server))
-        (deletef (server-task-order server)
+        (remhash (task-id task) (session-tasks session))
+        (deletef (session-task-order session)
                  (task-id task)
                  :test #'string=)
         (setf expired-p t)))
@@ -576,24 +649,24 @@
       (emit task :expired (task-id task)))
     expired-p))
 
-(defun schedule-task-expiry (server task)
+(defun schedule-task-expiry (session task)
   (make-thread
    #'(lambda ()
        ;; `sleep` can wake slightly early, so keep checking until the task is
        ;; either removed or genuinely reaches its TTL.
        (loop
-         (with-lock-held ((server-state-lock server))
-           (unless (gethash (task-id task) (server-tasks server))
+         (with-lock-held ((session-state-lock session))
+           (unless (gethash (task-id task) (session-tasks session))
              (return)))
-         (when (maybe-expire-task server task)
+         (when (maybe-expire-task session task)
            (return))
          (sleep (task-expiry-remaining-seconds task))))
    :name (format nil "mcp-sdk.task-expiry.~A" (task-id task))))
 
-(defun find-task (server task-id)
-  (cleanup-expired-tasks server)
-  (with-lock-held ((server-state-lock server))
-    (or (gethash task-id (server-tasks server))
+(defun find-task (session task-id)
+  (cleanup-expired-tasks session)
+  (with-lock-held ((session-state-lock session))
+    (or (gethash task-id (session-tasks session))
         (task-not-found task-id))))
 
 (defun update-task-status (task status &optional status-message)
@@ -665,11 +738,11 @@
           task
           (task-result-payload task))))
 
-(defun make-task (server method params request-id cancellation-token)
-  (cleanup-expired-tasks server)
-  (with-lock-held ((server-state-lock server))
-    (when (>= (hash-table-count (server-tasks server))
-              (server-task-max-count server))
+(defun make-task (session method params request-id cancellation-token)
+  (cleanup-expired-tasks session)
+  (with-lock-held ((session-state-lock session))
+    (when (>= (hash-table-count (session-tasks session))
+              (task-settings-max-count (session-task-settings session)))
       (raise-mcp-error +json-rpc-internal-error+
                        "Task limit exceeded"))
     (let* ((task-id (frugal-uuid:make-v7-string))
@@ -686,28 +759,30 @@
                                 :last-updated-at timestamp
                                 :created-ticks ticks
                                 :last-updated-ticks ticks
-                                :ttl-ms (normalize-task-ttl-ms server params)
-                                :poll-interval-ms (server-task-poll-interval-ms server)
+                                :ttl-ms (normalize-task-ttl-ms session params)
+                                :poll-interval-ms
+                                (task-settings-poll-interval-ms
+                                 (session-task-settings session))
                                 :cancellation-token cancellation-token)))
       (on task :created
           #'(lambda (emitted-task)
-              (emit server :task-created emitted-task)))
+              (emit session :task-created emitted-task)))
       (on task :completed
           #'(lambda (emitted-task result)
-              (emit server :task-completed emitted-task result)))
+              (emit session :task-completed emitted-task result)))
       (on task :failed
           #'(lambda (emitted-task payload)
-              (emit server :task-failed emitted-task payload)))
+              (emit session :task-failed emitted-task payload)))
       (on task :cancelled
           #'(lambda (emitted-task)
-              (emit server :task-cancelled emitted-task)))
+              (emit session :task-cancelled emitted-task)))
       (on task :expired
           #'(lambda (task-id)
-              (emit server :task-expired task-id)))
-      (setf (gethash task-id (server-tasks server)) task)
-      (push task-id (server-task-order server))
+              (emit session :task-expired task-id)))
+      (setf (gethash task-id (session-tasks session)) task)
+      (push task-id (session-task-order session))
       (emit task :created task)
-      (schedule-task-expiry server task)
+      (schedule-task-expiry session task)
       task)))
 
 (defun wait-for-task-completion (task)
@@ -750,23 +825,24 @@
       (raise-mcp-error +json-rpc-invalid-params-error+
                        (format nil "Unknown ~A: ~A" kind name))))
 
-(defun handle-ping-request (server context params)
-  (declare (ignore server context params))
+(defun handle-ping-request (session context params)
+  (declare (ignore session context params))
   (make-object))
 
-(defun handle-logging-set-level-request (server context params)
+(defun handle-logging-set-level-request (session context params)
   (declare (ignore context))
-  (setf (server-logging-level server)
+  (setf (session-logging-level session)
         (normalize-logging-level (json-get params "level")))
   (make-object))
 
-(defun handle-tools-list-request (server context params)
+(defun handle-tools-list-request (session context params)
   (declare (ignore context params))
-  (let ((tools '()))
+  (let ((definition (session-definition session))
+        (tools '()))
     (maphash #'(lambda (name descriptor)
                  (declare (ignore name))
                  (push (plist-descriptor->object descriptor :tool) tools))
-             (server-tools server))
+             (definition-tools definition))
     (make-object "tools" (make-array-from-list (nreverse tools)))))
 
 (defun task-request-p (params)
@@ -790,24 +866,24 @@
      (raise-mcp-error +json-rpc-method-not-found-error+
                       "This tool does not support task execution"))))
 
-(defun execute-task-tool-call (server task descriptor message params)
+(defun execute-task-tool-call (session task descriptor message params)
   (let ((arguments (ensure-object (json-get params "arguments"))))
-    (let ((lparallel:*kernel* (server-kernel server)))
+    (let ((lparallel:*kernel* (session-kernel session)))
       (lparallel:submit-task
        (lparallel:make-channel)
        #'(lambda ()
            (let ((context (make-instance '<request-context>
-                                         :server server
                                          :id (task-request-id task)
                                          :request message
                                          :params params
                                          :progress-token (progress-token-from-params params)
                                          :task-id (task-id task)
                                          :cancellation-token (task-cancellation-token task))))
+             (attach-context-session-events session context)
              (handler-case
                  (finalize-task-success
                   task
-                  (funcall (getf descriptor :handler) context arguments))
+                  (funcall (getf descriptor :handler) session context arguments))
                (mcp-error (condition)
                  (finalize-task-error task condition))
                (error (condition)
@@ -819,43 +895,45 @@
     (attach-related-task-meta result (task-id task))
     result))
 
-(defun handle-task-augmented-tools-call-request (server context descriptor params)
+(defun handle-task-augmented-tools-call-request (session context descriptor params)
   (let* ((request (context-request context))
-         (task (make-task server
+         (task (make-task session
                           "tools/call"
                           params
                           (context-id context)
                           (context-cancellation-token context))))
-    (execute-task-tool-call server task descriptor request params)
+    (execute-task-tool-call session task descriptor request params)
     (create-task-result task)))
 
-(defun handle-tools-call-request (server context params)
+(defun handle-tools-call-request (session context params)
   (let* ((name (json-get params "name"))
-         (descriptor (find-descriptor (server-tools server) name "tool"))
+         (descriptor (find-descriptor (definition-tools (session-definition session)) name "tool"))
          (arguments (ensure-object (json-get params "arguments"))))
     (enforce-tool-task-mode descriptor params)
     (if (task-request-p params)
-        (handle-task-augmented-tools-call-request server context descriptor params)
-        (funcall (getf descriptor :handler) context arguments))))
+        (handle-task-augmented-tools-call-request session context descriptor params)
+        (funcall (getf descriptor :handler) session context arguments))))
 
-(defun handle-resources-list-request (server context params)
+(defun handle-resources-list-request (session context params)
   (declare (ignore context params))
-  (let ((resources '()))
+  (let ((definition (session-definition session))
+        (resources '()))
     (maphash #'(lambda (name descriptor)
                  (declare (ignore name))
                  (when (getf descriptor :uri)
                    (push (plist-descriptor->object descriptor :resource) resources)))
-             (server-resources server))
+             (definition-resources definition))
     (make-object "resources" (make-array-from-list (nreverse resources)))))
 
-(defun handle-resource-templates-list-request (server context params)
+(defun handle-resource-templates-list-request (session context params)
   (declare (ignore context params))
-  (let ((resource-templates '()))
+  (let ((definition (session-definition session))
+        (resource-templates '()))
     (maphash #'(lambda (name descriptor)
                  (declare (ignore name))
                  (when (getf descriptor :uri-template)
                    (push (plist-descriptor->object descriptor :resource) resource-templates)))
-             (server-resources server))
+             (definition-resources definition))
     (make-object
      "resourceTemplates"
      (make-array-from-list (nreverse resource-templates)))))
@@ -884,74 +962,76 @@
                (t nil))))
     (matches-from 0 0)))
 
-(defun find-resource-by-uri (server uri)
-  (or (loop for descriptor being the hash-values of (server-resources server)
+(defun find-resource-by-uri (definition uri)
+  (or (loop for descriptor being the hash-values of (definition-resources definition)
             when (and (getf descriptor :uri)
                       (string= (getf descriptor :uri) uri))
               do (return descriptor))
-      (loop for descriptor being the hash-values of (server-resources server)
+      (loop for descriptor being the hash-values of (definition-resources definition)
             when (and (getf descriptor :uri-template)
                       (uri-template-matches-p (getf descriptor :uri-template) uri))
               do (return descriptor))
       (raise-mcp-error +json-rpc-invalid-params-error+
                        (format nil "Unknown resource uri: ~A" uri))))
 
-(defun find-resource-by-template-uri (server uri)
-  (or (loop for descriptor being the hash-values of (server-resources server)
+(defun find-resource-by-template-uri (definition uri)
+  (or (loop for descriptor being the hash-values of (definition-resources definition)
             when (and (getf descriptor :uri-template)
                       (string= (getf descriptor :uri-template) uri))
               do (return descriptor))
       (raise-mcp-error +json-rpc-invalid-params-error+
                        (format nil "Unknown resource template uri: ~A" uri))))
 
-(defun handle-resources-read-request (server context params)
+(defun handle-resources-read-request (session context params)
   (let* ((uri (json-get params "uri"))
-         (descriptor (find-resource-by-uri server uri)))
-    (funcall (getf descriptor :handler) context params)))
+         (descriptor (find-resource-by-uri (session-definition session) uri)))
+    (funcall (getf descriptor :handler) session context params)))
 
-(defun handle-prompts-list-request (server context params)
+(defun handle-prompts-list-request (session context params)
   (declare (ignore context params))
-  (let ((prompts '()))
+  (let ((definition (session-definition session))
+        (prompts '()))
     (maphash #'(lambda (name descriptor)
                  (declare (ignore name))
                  (push (plist-descriptor->object descriptor :prompt) prompts))
-             (server-prompts server))
+             (definition-prompts definition))
     (make-object "prompts" (make-array-from-list (nreverse prompts)))))
 
-(defun handle-prompts-get-request (server context params)
+(defun handle-prompts-get-request (session context params)
   (let* ((name (json-get params "name"))
-         (descriptor (find-descriptor (server-prompts server) name "prompt"))
+         (descriptor (find-descriptor (definition-prompts (session-definition session)) name "prompt"))
          (arguments (ensure-object (json-get params "arguments"))))
-    (funcall (getf descriptor :handler) context arguments)))
+    (funcall (getf descriptor :handler) session context arguments)))
 
-(defun handle-tasks-get-request (server context params)
+(defun handle-tasks-get-request (session context params)
   (declare (ignore context))
   (task->object
-   (find-task server (json-get params "taskId"))))
+   (find-task session (json-get params "taskId"))))
 
-(defun handle-tasks-result-request (server context params)
+(defun handle-tasks-result-request (session context params)
   (declare (ignore context))
-  (let ((task (find-task server (json-get params "taskId"))))
+  (let ((task (find-task session (json-get params "taskId"))))
     (unless (task-terminal-p task)
       (wait-for-task-completion task)
       (when (task-expired-p task)
-        (cleanup-expired-tasks server)
+        (cleanup-expired-tasks session)
         (task-not-found (task-id task))))
     (task-result-response task)))
 
-(defun handle-tasks-list-request (server context params)
+(defun handle-tasks-list-request (session context params)
   (declare (ignore context))
-  (cleanup-expired-tasks server)
+  (cleanup-expired-tasks session)
   (let* ((offset (parse-list-cursor params))
-         (task-ids (with-lock-held ((server-state-lock server))
-                     (copy-list (server-task-order server))))
-         (page-size (server-task-list-page-size server))
+         (task-ids (with-lock-held ((session-state-lock session))
+                     (copy-list (session-task-order session))))
+         (page-size
+           (task-settings-list-page-size (session-task-settings session)))
          (page (subseq task-ids
                        (min offset (length task-ids))
                        (min (length task-ids)
                             (+ offset page-size))))
          (tasks (mapcar #'(lambda (task-id)
-                            (task->object (find-task server task-id)))
+                            (task->object (find-task session task-id)))
                         page))
          (next-offset (+ offset (length page))))
     (let ((result (make-object
@@ -961,9 +1041,9 @@
               (princ-to-string next-offset)))
       result)))
 
-(defun handle-tasks-cancel-request (server context params)
+(defun handle-tasks-cancel-request (session context params)
   (declare (ignore context))
-  (let ((task (find-task server (json-get params "taskId"))))
+  (let ((task (find-task session (json-get params "taskId"))))
     (when (task-terminal-p task)
       (raise-mcp-error +json-rpc-invalid-params-error+
                        "Cannot cancel a terminal task"))
@@ -1016,31 +1096,31 @@
      (raise-mcp-error +json-rpc-invalid-params-error+
                       "Completion handler must return an object, list, or vector"))))
 
-(defun find-completion-descriptor (server ref)
+(defun find-completion-descriptor (definition ref)
   (let ((ref-type (json-get ref "type")))
     (cond
       ((string= ref-type "ref/prompt")
-       (find-descriptor (server-prompts server)
+       (find-descriptor (definition-prompts definition)
                         (json-get ref "name")
                         "prompt"))
       ((string= ref-type "ref/resource")
-       (find-resource-by-template-uri server (json-get ref "uri")))
+       (find-resource-by-template-uri definition (json-get ref "uri")))
       (t
        (raise-mcp-error +json-rpc-invalid-params-error+
                         (format nil "Unknown completion ref type: ~A" ref-type))))))
 
-(defun handle-completion-complete-request (server context params)
+(defun handle-completion-complete-request (session context params)
   (let* ((ref (ensure-object (json-get params "ref")))
          (argument (ensure-object (json-get params "argument")))
          (completion-context (ensure-object (json-get params "context")))
          (context-arguments (ensure-object (json-get completion-context "arguments")))
-         (descriptor (find-completion-descriptor server ref))
+         (descriptor (find-completion-descriptor (session-definition session) ref))
          (handler (getf descriptor :completion-handler)))
     (unless handler
       (raise-mcp-error +json-rpc-invalid-params-error+
                        "Completion is not supported for the requested reference"))
     (normalize-completion-result
-     (funcall handler context argument context-arguments))))
+     (funcall handler session context argument context-arguments))))
 
 (defvar *feature-request-handlers*
   '(("ping" . handle-ping-request)
@@ -1058,52 +1138,53 @@
     ("prompts/list" . handle-prompts-list-request)
     ("prompts/get" . handle-prompts-get-request)))
 
-(defun perform-feature-request (server context method params)
+(defun perform-feature-request (session context method params)
   (if-let ((handler-name (cdr (assoc method *feature-request-handlers* :test #'string=))))
-    (funcall (symbol-function handler-name) server context params)
+    (funcall (symbol-function handler-name) session context params)
     (raise-mcp-error +json-rpc-method-not-found-error+
                      (format nil "Unknown method: ~A" method))))
 
-(defun handle-initialize-request (server context params)
+(defun handle-initialize-request (session context params)
   (declare (ignore context))
-  (setf (server-initialized-p server) nil)
-  (setf (server-client-capabilities server)
+  (let ((definition (session-definition session)))
+    (setf (session-initialized-p session) nil)
+    (setf (session-client-capabilities session)
         (ensure-object (json-get params "capabilities")))
-  (with-lock-held ((server-state-lock server))
-    (setf (server-roots server) (make-array 0)))
-  (make-object
-   "protocolVersion" *default-protocol-version*
-   "capabilities" (capabilities-object server)
-   "serverInfo" (implementation-object server)))
+    (with-lock-held ((session-state-lock session))
+      (setf (session-roots session) (make-array 0)))
+    (make-object
+     "protocolVersion" *default-protocol-version*
+     "capabilities" (capabilities-object definition)
+     "serverInfo" (implementation-object definition))))
 
-(defun perform-request (server message)
+(defun perform-request (session message)
   (let* ((method (json-get message "method"))
          (params (method-params message))
          (id (json-get message "id")))
     (cond
       ((string= method "initialize")
-       (handle-initialize-request server nil params))
-      ((and (not (server-initialized-p server))
+       (handle-initialize-request session nil params))
+      ((and (not (session-initialized-p session))
             (not (string= method "initialize")))
        (raise-mcp-error +mcp-server-not-initialized-error+
                         "Server is not initialized"))
       (t
        (let ((token (make-instance '<cancellation-token>)))
-         (setf (gethash id (server-active-requests server)) token)
+         (setf (gethash id (session-active-requests session)) token)
          (unwind-protect
               (let ((context (make-instance '<request-context>
-                                            :server server
                                             :id id
                                             :request message
                                             :params params
                                             :progress-token (progress-token-from-params params)
                                             :cancellation-token token)))
-                (perform-feature-request server context method params))
-           (remhash id (server-active-requests server))))))))
+                (attach-context-session-events session context)
+                (perform-feature-request session context method params))
+           (remhash id (session-active-requests session))))))))
 
-(defun complete-outbound-response (server message)
+(defun complete-outbound-response (session message)
   (let ((pending (gethash (json-get message "id")
-                          (server-pending-outbound server))))
+                          (session-pending-outbound session))))
     (when pending
       (resolve-pending-request pending message))))
 
@@ -1115,90 +1196,90 @@
             "tasks/cancel")
           :test #'string=))
 
-(defun execute-request (server message)
+(defun execute-request (session message)
   (handler-case
-      (list :ok (perform-request server message))
+      (list :ok (perform-request session message))
     (mcp-error (condition)
       (list :mcp-error condition))
     (error (condition)
       (list :error condition))))
 
-(defun process-request-result (server message status payload)
+(defun process-request-result (session message status payload)
   (let ((id (json-get message "id")))
     (ecase status
       (:ok
-       (send-response server id payload)
-       (emit server :response-sent message payload))
+       (send-response session id payload)
+       (emit session :response-sent message payload))
       (:mcp-error
-       (send-error server id
+       (send-error session id
                    (mcp-error-code payload)
                    (mcp-error-message payload)
                    (mcp-error-data payload))
-       (emit server :handler-failed message payload))
+       (emit session :handler-failed message payload))
       (:error
-       (send-error server id +json-rpc-internal-error+ "Internal error")
-       (emit server :handler-failed message payload)))))
+       (send-error session id +json-rpc-internal-error+ "Internal error")
+       (emit session :handler-failed message payload)))))
 
-(defun handle-request-message (server message)
+(defun handle-request-message (session message)
   (let* ((id (json-get message "id"))
          (method (json-get message "method")))
-    (emit server :request-received message)
+    (emit session :request-received message)
     (if (inline-request-method-p method)
         (make-thread
          #'(lambda ()
              (destructuring-bind (status payload)
-                 (execute-request server message)
-               (process-request-result server message status payload)))
+                 (execute-request session message)
+               (process-request-result session message status payload)))
          :name "mcp-sdk.inline-request")
-        (let ((channel (let ((lparallel:*kernel* (ensure-kernel server)))
+        (let ((channel (let ((lparallel:*kernel* (ensure-kernel session)))
                          (lparallel:make-channel))))
-          (let ((lparallel:*kernel* (server-kernel server)))
+          (let ((lparallel:*kernel* (session-kernel session)))
             (lparallel:submit-task channel
                                    #'(lambda ()
-                                       (execute-request server message))))
+                                       (execute-request session message))))
           (make-thread
            #'(lambda ()
                (destructuring-bind (status payload)
                    (lparallel:receive-result channel)
-                 (process-request-result server message status payload)))
+                 (process-request-result session message status payload)))
            :name "mcp-sdk.request-waiter")))))
 
-(defun handle-notification-message (server message)
+(defun handle-notification-message (session message)
   (let* ((method (json-get message "method"))
          (params (method-params message)))
-    (emit server :notification-received message)
+    (emit session :notification-received message)
     (cond
       ((string= method "notifications/initialized")
-       (setf (server-initialized-p server) t)
-       (when (roots-capability-p server)
-         (refresh-roots-async server)))
+       (setf (session-initialized-p session) t)
+       (when (roots-capability-p session)
+         (refresh-roots-async session)))
       ((string= method "notifications/cancelled")
        (let* ((request-id (json-get params "requestId"))
-              (token (gethash request-id (server-active-requests server))))
+              (token (gethash request-id (session-active-requests session))))
          (when token
            (with-lock-held ((cancellation-token-lock token))
              (setf (cancelled-p token) t))
-           (emit server :request-cancelled request-id))))
+           (emit session :request-cancelled request-id))))
       ((string= method "notifications/roots/list_changed")
-       (refresh-roots-async server)
-       (emit server :roots-list-changed))
+       (refresh-roots-async session)
+       (emit session :roots-list-changed))
       (t nil))))
 
-(defun handle-message (server message)
+(defun handle-message (session message)
   (handler-case
       (cond
         ((request-message-p message)
-         (handle-request-message server message))
+         (handle-request-message session message))
         ((notification-message-p message)
-         (handle-notification-message server message))
+         (handle-notification-message session message))
        ((response-message-p message)
-        (complete-outbound-response server message))
+        (complete-outbound-response session message))
        (t
-         (send-error server nil +json-rpc-invalid-request-error+ "Invalid request")))
+         (send-error session nil +json-rpc-invalid-request-error+ "Invalid request")))
     (mcp-error (condition)
       (let ((id (json-get message "id")))
         (when id
-          (send-error server id
+          (send-error session id
                       (mcp-error-code condition)
                       (mcp-error-message condition)
                       (mcp-error-data condition)))))
@@ -1206,11 +1287,10 @@
       (declare (ignore condition))
       (let ((id (json-get message "id")))
         (when id
-          (send-error server id +json-rpc-internal-error+ "Internal error")))))
-  server)
+          (send-error session id +json-rpc-internal-error+ "Internal error")))))
+  session)
 
 (defun start-server (server)
-  (ensure-kernel server)
   (setf (server-started-p server) t)
   (start-transport (server-transport server) server)
   (emit server :server-started server)
@@ -1219,10 +1299,8 @@
 (defun stop-server (server)
   (when (server-started-p server)
     (stop-transport (server-transport server))
-    (when (server-kernel server)
-      (let ((lparallel:*kernel* (server-kernel server)))
-        (lparallel:end-kernel :wait t))
-      (setf (server-kernel server) nil))
+    (dolist (session (copy-list (server-sessions server)))
+      (destroy-session session))
     (setf (server-started-p server) nil)
     (emit server :server-stopped server))
   server)

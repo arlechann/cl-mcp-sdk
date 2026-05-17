@@ -41,6 +41,7 @@
    #:json-get
    #:log-message
    #:make-server
+   #:make-session
    #:make-stdio-transport
    #:mcp-error
    #:mcp-error-code
@@ -51,7 +52,10 @@
    #:register-tool
    #:send-notification
    #:send-request
+   #:<session>
    #:<server>
+   #:session-off
+   #:session-on
    #:server-off
    #:server-on
    #:start-server

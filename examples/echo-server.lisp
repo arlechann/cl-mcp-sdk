@@ -34,8 +34,8 @@
      :title "Echo"
      :description "受け取ったテキストをそのまま返します。"
      :input-schema (echo-schema)
-     :handler #'(lambda (context arguments)
-                  (declare (ignore context))
+     :handler #'(lambda (session context arguments)
+                  (declare (ignore session context))
                   (text-content (or (mcp-sdk:json-get arguments "text")
                                     ""))))
     server))

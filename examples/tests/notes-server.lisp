@@ -1,9 +1,10 @@
 (in-package #:mcp-sdk.examples.tests)
 
 (deftest notes-server-list-roots-with-parsed-json-array
-  (let ((server (make-notes-server
-                 :transport (make-instance '<test-transport>))))
-    (handle-message server
+  (let* ((server (make-notes-server
+                  :transport (make-instance '<test-transport>)))
+         (session (mcp-sdk:make-session server)))
+    (handle-message session
                     (make-request 40 "initialize"
                                   (mcp-sdk::make-object
                                    "protocolVersion" mcp-sdk::*default-protocol-version*
@@ -11,43 +12,44 @@
                                                    "roots" (mcp-sdk::make-object
                                                             "listChanged" t)))))
     (ok (wait-for #'(lambda ()
-                      (equal 40 (json-get (last-message server) "id")))))
-    (handle-message server (make-notification "notifications/initialized"))
+                      (equal 40 (json-get (last-message session) "id")))))
+    (handle-message session (make-notification "notifications/initialized"))
     (ok (wait-for #'(lambda ()
-                      (find-message-by-method server "roots/list"))))
-    (handle-message server
+                      (find-message-by-method session "roots/list"))))
+    (handle-message session
                     (json-decode
                      "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"roots\":[{\"uri\":\"file:///workspace/project\",\"name\":\"Project\"}]}}"))
 
-    (handle-message server
+    (handle-message session
                     (make-request 41 "tools/call"
                                   (mcp-sdk::make-object
                                    "name" "notes/list-roots"
                                    "arguments" (mcp-sdk::make-object))))
     (ok (wait-for #'(lambda ()
-                      (equal 41 (json-get (last-message server) "id")))))
-    (ok (= (length (json-get (response-result (last-message server)) "roots")) 1))
-    (ok (equal (json-get (json-get (response-result (last-message server)) "roots")
+                      (equal 41 (json-get (last-message session) "id")))))
+    (ok (= (length (json-get (response-result (last-message session)) "roots")) 1))
+    (ok (equal (json-get (json-get (response-result (last-message session)) "roots")
                          '(0 "uri"))
                "file:///workspace/project"))
-    (ok (equal (json-get (aref (json-get (response-result (last-message server)) "content") 0)
+    (ok (equal (json-get (aref (json-get (response-result (last-message session)) "content") 0)
                          "text")
                (format nil "file:///workspace/project (Project)~%")))))
 
 (deftest notes-server-completion
-  (let ((server (make-notes-server
-                 :transport (make-instance '<test-transport>))))
-    (handle-message server
+  (let* ((server (make-notes-server
+                  :transport (make-instance '<test-transport>)))
+         (session (mcp-sdk:make-session server)))
+    (handle-message session
                     (make-request 50 "initialize"
                                   (mcp-sdk::make-object
                                    "protocolVersion" mcp-sdk::*default-protocol-version*)))
     (ok (wait-for #'(lambda ()
-                      (equal 50 (json-get (last-message server) "id")))))
-    (ok (json-get (json-get (response-result (last-message server)) "capabilities")
+                      (equal 50 (json-get (last-message session) "id")))))
+    (ok (json-get (json-get (response-result (last-message session)) "capabilities")
                   "completions"))
-    (handle-message server (make-notification "notifications/initialized"))
+    (handle-message session (make-notification "notifications/initialized"))
 
-    (handle-message server
+    (handle-message session
                     (make-request 51 "tools/call"
                                   (mcp-sdk::make-object
                                    "name" "notes/create"
@@ -55,9 +57,9 @@
                                                 "title" "TODO note"
                                                 "body" "buy milk"))))
     (ok (wait-for #'(lambda ()
-                      (equal 51 (json-get (last-message server) "id")))))
+                      (equal 51 (json-get (last-message session) "id")))))
 
-    (handle-message server
+    (handle-message session
                     (make-request 52 "completion/complete"
                                   (mcp-sdk::make-object
                                    "ref" (mcp-sdk::make-object
@@ -67,12 +69,12 @@
                                                "name" "focus"
                                                "value" "TO"))))
     (ok (wait-for #'(lambda ()
-                      (equal 52 (json-get (last-message server) "id")))))
-    (ok (equal (json-get (json-get (response-result (last-message server)) "completion")
+                      (equal 52 (json-get (last-message session) "id")))))
+    (ok (equal (json-get (json-get (response-result (last-message session)) "completion")
                          '("values" 0))
                "TODO"))
 
-    (handle-message server
+    (handle-message session
                     (make-request 53 "completion/complete"
                                   (mcp-sdk::make-object
                                    "ref" (mcp-sdk::make-object
@@ -82,32 +84,33 @@
                                                "name" "id"
                                                "value" ""))))
     (ok (wait-for #'(lambda ()
-                      (equal 53 (json-get (last-message server) "id")))))
-    (ok (equal (json-get (json-get (response-result (last-message server)) "completion")
+                      (equal 53 (json-get (last-message session) "id")))))
+    (ok (equal (json-get (json-get (response-result (last-message session)) "completion")
                          '("values" 0))
                "1"))))
 
 (deftest notes-server-logging
-  (let ((server (make-notes-server
-                 :transport (make-instance '<test-transport>))))
-    (handle-message server
+  (let* ((server (make-notes-server
+                  :transport (make-instance '<test-transport>)))
+         (session (mcp-sdk:make-session server)))
+    (handle-message session
                     (make-request 54 "initialize"
                                   (mcp-sdk::make-object
                                    "protocolVersion" mcp-sdk::*default-protocol-version*)))
     (ok (wait-for #'(lambda ()
-                      (equal 54 (json-get (last-message server) "id")))))
-    (ok (json-get (json-get (response-result (last-message server)) "capabilities")
+                      (equal 54 (json-get (last-message session) "id")))))
+    (ok (json-get (json-get (response-result (last-message session)) "capabilities")
                   "logging"))
-    (handle-message server (make-notification "notifications/initialized"))
+    (handle-message session (make-notification "notifications/initialized"))
 
-    (handle-message server
+    (handle-message session
                     (make-request 55 "logging/setLevel"
                                   (mcp-sdk::make-object
                                    "level" "info")))
     (ok (wait-for #'(lambda ()
-                      (equal 55 (json-get (last-message server) "id")))))
+                      (equal 55 (json-get (last-message session) "id")))))
 
-    (handle-message server
+    (handle-message session
                     (make-request 56 "tools/call"
                                   (mcp-sdk::make-object
                                    "name" "notes/create"
@@ -115,9 +118,9 @@
                                                 "title" "logged note"
                                                 "body" "body"))))
     (ok (wait-for #'(lambda ()
-                      (equal 56 (json-get (last-message server) "id")))))
+                      (equal 56 (json-get (last-message session) "id")))))
     (ok (wait-for #'(lambda ()
-                      (let ((message (find-message-by-method server "notifications/message")))
+                      (let ((message (find-message-by-method session "notifications/message")))
                         (and message
                              (equal "info" (json-get message '("params" "level")))
                              (equal "notes-server" (json-get message '("params" "logger")))
@@ -125,28 +128,29 @@
                              (equal "logged note" (json-get message '("params" "data" "title"))))))))))
 
 (deftest notes-server-task-tool
-  (let ((server (make-notes-server
-                 :transport (make-instance '<test-transport>)
-                 :summarize-async-step-sleep-seconds 0.01)))
-    (handle-message server
+  (let* ((server (make-notes-server
+                  :transport (make-instance '<test-transport>)
+                  :summarize-async-step-sleep-seconds 0.01))
+         (session (mcp-sdk:make-session server)))
+    (handle-message session
                     (make-request 60 "initialize"
                                   (mcp-sdk::make-object
                                    "protocolVersion" mcp-sdk::*default-protocol-version*)))
     (ok (wait-for #'(lambda ()
-                      (equal 60 (json-get (last-message server) "id")))))
-    (ok (json-get (json-get (json-get (response-result (last-message server))
+                      (equal 60 (json-get (last-message session) "id")))))
+    (ok (json-get (json-get (json-get (response-result (last-message session))
                                       "capabilities")
                             '("tasks" "requests" "tools"))
                   "call"))
-    (handle-message server (make-notification "notifications/initialized"))
+    (handle-message session (make-notification "notifications/initialized"))
 
-    (handle-message server
+    (handle-message session
                     (make-request 61 "tools/list"))
     (ok (wait-for #'(lambda ()
-                      (equal 61 (json-get (last-message server) "id")))))
+                      (equal 61 (json-get (last-message session) "id")))))
     (let ((tool
             (find "notes/summarize-async"
-                  (coerce (json-get (response-result (last-message server)) "tools") 'list)
+                  (coerce (json-get (response-result (last-message session)) "tools") 'list)
                   :test #'string=
                   :key #'(lambda (entry)
                            (json-get entry "name")))))
@@ -154,17 +158,17 @@
       (ok (equal (json-get tool '("execution" "taskSupport"))
                  "required")))
 
-    (handle-message server
+    (handle-message session
                     (make-request 62 "tools/call"
                                   (mcp-sdk::make-object
                                    "name" "notes/summarize-async"
                                    "arguments" (mcp-sdk::make-object))))
     (ok (wait-for #'(lambda ()
-                      (equal 62 (json-get (last-message server) "id")))))
-    (ok (= (json-get (json-get (last-message server) "error") "code")
+                      (equal 62 (json-get (last-message session) "id")))))
+    (ok (= (json-get (json-get (last-message session) "error") "code")
            mcp-sdk:+json-rpc-method-not-found-error+))
 
-    (handle-message server
+    (handle-message session
                     (make-request 63 "tools/call"
                                   (mcp-sdk::make-object
                                    "name" "notes/create"
@@ -172,9 +176,9 @@
                                                 "title" "task note"
                                                 "body" "buy milk"))))
     (ok (wait-for #'(lambda ()
-                      (equal 63 (json-get (last-message server) "id")))))
+                      (equal 63 (json-get (last-message session) "id")))))
 
-    (handle-message server
+    (handle-message session
                     (make-request 64 "tools/call"
                                   (mcp-sdk::make-object
                                    "name" "notes/summarize-async"
@@ -183,24 +187,24 @@
                                    "_meta" (mcp-sdk::make-object
                                             "progressToken" "notes-task-token"))))
     (ok (wait-for #'(lambda ()
-                      (find-message-by-id server 64))))
-    (let ((task-id (json-get (response-result (find-message-by-id server 64))
+                      (find-message-by-id session 64))))
+    (let ((task-id (json-get (response-result (find-message-by-id session 64))
                              '("task" "taskId"))))
       (ok (stringp task-id))
       (ok (wait-for #'(lambda ()
-                        (let ((message (find-message-by-method server "notifications/progress")))
+                        (let ((message (find-message-by-method session "notifications/progress")))
                           (equal (json-get message
                                            '("params" "_meta" "io.modelcontextprotocol/related-task" "taskId"))
                                  task-id)))))
-      (handle-message server
+      (handle-message session
                       (make-request 65 "tasks/result"
                                     (mcp-sdk::make-object "taskId" task-id)))
       (ok (wait-for #'(lambda ()
-                        (find-message-by-id server 65))))
-      (ok (equal (json-get (response-result (find-message-by-id server 65))
+                        (find-message-by-id session 65))))
+      (ok (equal (json-get (response-result (find-message-by-id session 65))
                            '("_meta" "io.modelcontextprotocol/related-task" "taskId"))
                  task-id))
-      (ok (stringp (json-get (aref (json-get (response-result (find-message-by-id server 65))
+      (ok (stringp (json-get (aref (json-get (response-result (find-message-by-id session 65))
                                              "content")
                                    0)
                              "text"))))))
