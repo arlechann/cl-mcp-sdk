@@ -244,6 +244,25 @@ Common Lisp SDK です。
 
 ### JSON ヘルパ
 
+`src/jsonrpc.lisp` と SDK 内部で扱う JSON 値は、Common Lisp 側では次の表現を前提にしています。
+
+- JSON object
+  文字列キーを持つ `hash-table` です。
+- JSON array
+  主に `vector` を使います。`list` も受け付ける箇所がありますが、`json-decode` の結果や
+  SDK が返す配列値は基本的に `vector` です。
+- JSON string / number
+  Common Lisp の文字列と数値です。
+- JSON true
+  `t` です。
+- JSON false
+  `:false` です。`nil` ではありません。
+- JSON null
+  `nil` です。
+
+そのため、JSON object を自前で組み立てるときは `hash-table` を使い、boolean false を
+返したい場合は `nil` ではなく `:false` を使ってください。
+
 - `mcp-sdk:json-encode object`
   Lisp データを JSON 文字列に変換します。
 - `mcp-sdk:json-decode string`
